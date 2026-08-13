@@ -162,7 +162,15 @@ export function Hall({
           // Without this the board is captured into the canvas's own stacking
           // context and disappears behind the effect composer's output.
           zIndexRange={[10, 0]}
-          style={{ width: `${quality.boardPixelWidth}px`, pointerEvents: "none" }}
+          /*
+           * As a PROP, not in `style`. drei sizes the Html root element to the
+           * whole canvas and takes its pointer-events from this prop; `style`
+           * only reaches the inner content div. Setting it there left an
+           * invisible full-canvas div swallowing every pointer event, which
+           * silently disabled drag-to-look and orbit.
+           */
+          pointerEvents="none"
+          style={{ width: `${quality.boardPixelWidth}px` }}
         >
           <TotBoardView
             markets={markets}

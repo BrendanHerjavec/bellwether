@@ -168,7 +168,9 @@ function Figure({
           center
           distanceFactor={14}
           zIndexRange={[6, 0]}
-          style={{ pointerEvents: "none" }}
+          // As a prop: drei's Html root covers the canvas and reads its
+          // pointer-events from here, not from `style`.
+          pointerEvents="none"
         >
           <div
             key={info.pulseKey}
