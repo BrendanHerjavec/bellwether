@@ -1,0 +1,275 @@
+/*
+ * The tote board housing.
+ *
+ * Everything here is doing one job: make the split-flap rows look like they are
+ * mounted in a heavy metal frame in a dark room, lit warm from above. In step 7
+ * this whole panel gets mounted inside a 3D hall via CSS3DRenderer, so it is
+ * built as a self-contained physical object with its own lighting cues rather
+ * than as a page layout.
+ */
+
+.hall {
+  position: relative;
+  min-height: 100vh;
+  background: #06070a;
+  overflow: hidden;
+}
+
+/* Warm key light pooling from above, falling off into darkness at the edges. */
+.hall::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      120% 70% at 50% -10%,
+      rgba(255, 205, 130, 0.16) 0%,
+      rgba(255, 180, 100, 0.06) 32%,
+      rgba(0, 0, 0, 0) 68%
+    ),
+    radial-gradient(
+      90% 60% at 50% 120%,
+      rgba(70, 110, 160, 0.09) 0%,
+      rgba(0, 0, 0, 0) 60%
+    );
+  pointer-events: none;
+}
+
+/* Reflective floor: a soft pool under the board rather than a mirrored copy,
+   which is cheaper and reads better at this angle. */
+.hall::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 140%;
+  height: 38vh;
+  transform: translateX(-50%);
+  background: linear-gradient(
+    0deg,
+    rgba(255, 196, 128, 0.05) 0%,
+    rgba(255, 196, 128, 0.018) 34%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  filter: blur(28px);
+  pointer-events: none;
+}
+
+.hall__content {
+  position: relative;
+  z-index: 1;
+}
+
+/* --- housing ------------------------------------------------------------- */
+
+.board {
+  position: relative;
+  border-radius: 10px;
+  padding: 14px;
+  /* Brushed metal: a base gradient plus a fine vertical grain. */
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.014) 0px,
+      rgba(255, 255, 255, 0.014) 1px,
+      rgba(0, 0, 0, 0.02) 1px,
+      rgba(0, 0, 0, 0.02) 3px
+    ),
+    linear-gradient(165deg, #3a3f49 0%, #262a33 22%, #1a1d24 60%, #14171c 100%);
+  box-shadow:
+    /* the bevel */
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.65),
+    /* the frame casting into the room */
+    0 40px 90px -20px rgba(0, 0, 0, 0.9),
+    0 0 140px -40px rgba(255, 190, 120, 0.22);
+}
+
+/* The recess the flap rows sit in, darker than the frame around it. */
+.board__well {
+  position: relative;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #0b0d11 0%, #06070a 100%);
+  box-shadow:
+    inset 0 2px 10px rgba(0, 0, 0, 0.9),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.8);
+  overflow: hidden;
+}
+
+/* --- header -------------------------------------------------------------- */
+
+.board__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 2px 8px 12px;
+}
+
+.board__title {
+  font-family: var(--font-flap), sans-serif;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.34em;
+  color: #f0e6d2;
+  text-transform: uppercase;
+  text-shadow: 0 0 22px rgba(255, 200, 130, 0.3);
+}
+
+.board__subtitle {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #7d8494;
+}
+
+/* Column headers, etched into the frame rather than printed on it. */
+.board__columns {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: #6a7183;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* --- rows ---------------------------------------------------------------- */
+
+.market-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 12px;
+  position: relative;
+}
+
+.market-row + .market-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.035);
+  box-shadow: 0 -1px 0 rgba(0, 0, 0, 0.6);
+}
+
+.market-row__index {
+  width: 22px;
+  flex: 0 0 auto;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  color: #545b6b;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-row__question {
+  flex: 1 1 auto;
+  min-width: 0;
+  /*
+   * Hard backstop. The drum count is computed from this element's measured
+   * width so it should never overflow, but a mis-measure must degrade to a
+   * clipped question rather than drums sliding under the price column and
+   * making both unreadable. Readability is not allowed to depend on the
+   * measurement being right.
+   */
+  overflow: hidden;
+}
+
+.market-row__price {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* Never squeezed by a long question: the price is the point of the row. */
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+/* The percent mark is etched into the frame, not a drum. Only the number
+   changes, so only the number should move. */
+.market-row__pct {
+  font-family: var(--font-flap), sans-serif;
+  font-weight: 700;
+  font-size: calc(var(--flap-h) * 0.42);
+  color: #6e7484;
+  line-height: 1;
+  padding-bottom: 2px;
+}
+
+.market-row__move {
+  flex: 0 0 auto;
+  width: 62px;
+  text-align: right;
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  transition: color 400ms ease;
+}
+
+.market-row__move[data-dir="up"] {
+  color: #6fca90;
+}
+
+.market-row__move[data-dir="down"] {
+  color: #d2705f;
+}
+
+.market-row__move[data-dir="flat"] {
+  color: #4d5464;
+}
+
+/* --- status -------------------------------------------------------------- */
+
+.market-row__status {
+  flex: 0 0 auto;
+  width: 116px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-family: var(--font-mono), monospace;
+}
+
+.status-lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.market-row__status[data-status="open"] {
+  color: #e0a94a;
+}
+
+.market-row__status[data-status="locked"] {
+  color: #7b8296;
+}
+
+.market-row__status[data-status="settled-yes"] {
+  color: #6fca90;
+}
+
+.market-row__status[data-status="settled-no"] {
+  color: #d2705f;
+}
+
+/* A void is a clean, deliberate outcome. It gets a calm blue-grey and the same
+   visual weight as a settlement — never a warning colour, never an error state. */
+.market-row__status[data-status="void"] {
+  color: #8fa7c4;
+}
+
+.status-lamp[data-lit="false"] {
+  box-shadow: none;
+  opacity: 0.45;
+}
+
+/* Settled and void rows dim slightly: the live markets should own the eye. */
+.market-row[data-resolved="true"] .market-row__question,
+.market-row[data-resolved="true"] .market-row__price {
+  opacity: 0.62;
+  transition: opacity 700ms ease;
+}

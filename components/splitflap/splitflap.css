@@ -1,0 +1,240 @@
+/*
+ * Split-flap display.
+ *
+ * Geometry of one character position:
+ *
+ *   ┌─────────────┐  static top      shows the INCOMING glyph's top half
+ *   │  ▓▓▓▓▓▓▓▓▓  │  leaf front      shows the OUTGOING glyph's top half,
+ *   ├─────────────┤                  rotates down out of the way
+ *   │  ▓▓▓▓▓▓▓▓▓  │  leaf back       shows the INCOMING glyph's bottom half,
+ *   └─────────────┘                  swings down into place
+ *                     static bottom  shows the OUTGOING glyph's bottom half
+ *
+ * The two static halves sit behind the two moving leaves. Nothing cross-fades:
+ * every visual change is a card physically getting out of the way of another
+ * card, which is what makes the display read as mechanical.
+ */
+
+.flapboard {
+  /*
+   * Two drum sizes, not one.
+   *
+   * On a real tote board the odds are the big number and the entry name is
+   * set much smaller. Trying to render a 30 character question at the same
+   * size as a 2 digit price is what makes the row overflow its column and
+   * collide with everything to its right.
+   */
+  --flap-h: 52px; /* price drums: the number people read from the back row */
+  --flap-w: 32px;
+  --flap-glyph-ratio: 0.86;
+
+  /*
+   * Question drums are sized against the widest glyph in TEXT_CHARSET, which
+   * is "%" — noticeably wider than any letter, and wide enough that sizing by
+   * eye off "M" leaves it overflowing its drum and getting its sides shaved.
+   * At these values the widest glyph fills about 80% of the cell, so every
+   * character keeps side bearing and no drum ever clips its own glyph.
+   */
+  --flap-text-h: 30px;
+  --flap-text-w: 22px;
+  --flap-text-glyph-ratio: 0.78;
+
+  --flap-gap: 2px;
+  --flap-radius: 3px;
+  --flap-glyph: #f2ebda;
+  --flap-glyph-dim: #8d8a7e;
+}
+
+/*
+ * Rebind the drum size for a subtree. Everything below is written against
+ * --flap-h / --flap-w, so overriding those two here rescales the whole
+ * mechanism — faces, glyph, seam and pins — with no duplicated rules.
+ */
+.flap-scope--text {
+  --flap-h: var(--flap-text-h);
+  --flap-w: var(--flap-text-w);
+  --flap-glyph-ratio: var(--flap-text-glyph-ratio);
+}
+
+.flap {
+  position: relative;
+  width: var(--flap-w);
+  height: var(--flap-h);
+  /* Shallow perspective exaggerates the fall. Too deep and the flap looks flat. */
+  perspective: 240px;
+  perspective-origin: 50% 50%;
+  flex: 0 0 auto;
+  border-radius: var(--flap-radius);
+  /* The gap the cards sit in: darker than the cards, so each drum reads as a
+     separate physical unit rather than one continuous panel. */
+  background: #05060a;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.028),
+    0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+/* --- the four faces ------------------------------------------------------ */
+
+.flap__face {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.flap__face--top {
+  top: 0;
+  align-items: flex-start;
+  border-radius: var(--flap-radius) var(--flap-radius) 0 0;
+  /* Lit from above: the top card catches the key light. */
+  background: linear-gradient(180deg, #2b2f37 0%, #212530 55%, #1b1f27 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.075),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55);
+}
+
+.flap__face--bottom {
+  bottom: 0;
+  align-items: flex-end;
+  border-radius: 0 0 var(--flap-radius) var(--flap-radius);
+  /* The lower card falls into shadow. */
+  background: linear-gradient(180deg, #171a21 0%, #12151b 60%, #0d1015 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(0, 0, 0, 0.7),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.028);
+}
+
+/* The moving leaves stack above the static faces. */
+.flap__face--leaf {
+  z-index: 2;
+}
+
+.flap__face--leaf-front {
+  transform-origin: center bottom;
+  transform: rotateX(0deg);
+}
+
+.flap__face--leaf-back {
+  transform-origin: center top;
+  transform: rotateX(90deg);
+}
+
+/* Only promote to its own layer while actually moving. With ~200 flap units on
+   screen, permanently promoting every leaf costs more than it saves. */
+.flap.is-flipping .flap__face--leaf {
+  will-change: transform;
+}
+
+/* --- the glyph ----------------------------------------------------------- */
+
+/*
+ * Each half clips a full-height glyph. The top half aligns the glyph to its top
+ * and clips the overflow; the bottom half aligns to its bottom. The two halves
+ * therefore show the two halves of the same character, split exactly on the
+ * seam, with no duplicated measurement to keep in sync.
+ */
+.flap__glyph {
+  display: block;
+  height: var(--flap-h);
+  line-height: var(--flap-h);
+  font-family: var(--font-flap), "Barlow Condensed", "Oswald", sans-serif;
+  font-weight: 700;
+  font-size: calc(var(--flap-h) * var(--flap-glyph-ratio));
+  letter-spacing: 0;
+  color: var(--flap-glyph);
+  text-align: center;
+  width: 100%;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+  /* Just enough glow to read as an emissive board without blooming into mush. */
+  text-shadow: 0 0 14px rgba(255, 232, 180, 0.13);
+  transform: translateZ(0);
+}
+
+/* --- shading ------------------------------------------------------------- */
+
+/*
+ * A card turning away from an overhead key light gets darker. Animating this
+ * alongside the rotation is most of what separates a convincing flap from a
+ * div doing a rotateX.
+ */
+.flap__shade {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 3;
+}
+
+.flap__face--leaf-front .flap__shade {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.9) 100%);
+}
+
+.flap__face--leaf-back .flap__shade {
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.1) 0%, rgba(0, 0, 0, 0.88) 100%);
+}
+
+/* --- the seam ------------------------------------------------------------ */
+
+/* The hairline where the two halves meet, plus the shadow the upper card casts
+   onto the lower one. Sits above everything so it is never occluded mid-flip. */
+.flap__seam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+  background: rgba(0, 0, 0, 0.85);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* Tiny axle pins on either side of the seam. Small detail, reads instantly. */
+.flap__pin {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, #4a505c, #23272f);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.flap__pin--left {
+  left: -1px;
+}
+
+.flap__pin--right {
+  right: -1px;
+}
+
+/* --- groupings ----------------------------------------------------------- */
+
+.flap-row {
+  display: flex;
+  gap: var(--flap-gap);
+  align-items: stretch;
+}
+
+/* A word-break hint: slightly wider gap where a space falls, so long text
+   reads as words rather than an undifferentiated wall of drums. */
+.flap-row .flap[data-space="true"] {
+  background: #04050899;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Respect the setting, but do not go blank: the board still has to show the
+     number. The glyph swaps instantly and the leaves never rotate. */
+  .flap__face--leaf {
+    transition: none !important;
+  }
+}
