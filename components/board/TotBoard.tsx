@@ -30,15 +30,42 @@ export interface TotBoardViewProps {
   markets: Market[];
   trades: TradeRecord[];
   widthPx?: number;
+  /**
+   * How much atmosphere sits between the camera and the board, 0..1.
+   *
+   * The board is composited outside the WebGL canvas, so it receives none of
+   * the scene's fog. Passing the fog in and painting it on as an overlay is
+   * what stops it looking like a bright rectangle pasted over a hazy room.
+   * Computed by `boardFogBlend()` from the scene's own constants, never by eye.
+   */
+  fogBlend?: number;
+  fogColor?: string;
 }
 
-export function TotBoardView({ markets, trades, widthPx }: TotBoardViewProps) {
+export function TotBoardView({
+  markets,
+  trades,
+  widthPx,
+  fogBlend,
+  fogColor,
+}: TotBoardViewProps) {
   const openCount = markets.filter((m) => m.status === "open").length;
+  const graded = fogBlend !== undefined && fogBlend > 0;
 
   return (
     <div
-      className="board flapboard"
-      style={widthPx ? { width: `${widthPx}px` } : undefined}
+      className={`board flapboard${graded ? " board--in-scene" : ""}`}
+      style={
+        {
+          ...(widthPx ? { width: `${widthPx}px` } : {}),
+          ...(graded
+            ? {
+                "--board-fog": String(fogBlend),
+                "--board-fog-color": fogColor ?? "#141a24",
+              }
+            : {}),
+        } as React.CSSProperties
+      }
     >
       <div className="board__header">
         <div>

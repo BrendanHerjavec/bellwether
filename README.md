@@ -101,6 +101,41 @@ toggle. The fallback is not a nicety — the hall is the only part of this app
 that can be too slow on a given laptop, and a projected board that stutters is
 worse than one that is merely flat.
 
+**The board cannot join the render, so the render joins the board.**
+
+Being composited outside the canvas means the board receives no bloom, no fog,
+no depth of field and no colour grade — it is lit by CSS while everything around
+it is lit by three.js. That is precisely what "it feels like an overlay" means,
+and no amount of repositioning fixes it. Rendering it to a texture would fix it
+and give up the crisp text the whole approach exists to protect. So instead:
+
+1. **The screen is a light.** `ScreenLight` puts real lights at the board's
+   position, so the reveals, the seat backs and the nearest heads are lit *by*
+   the screen — as an audience is in a real auditorium. Until this existed
+   nothing in the 3D scene acknowledged that a large bright rectangle was in the
+   wall.
+2. **An emissive halo sits behind it.** Slightly oversized, so the bloom pass
+   bleeds glow out past the DOM board's edges. That glow *is* in the render, so
+   it straddles the seam between the two layers and hides it.
+3. **The board is graded to the scene's own fog.** `boardFogBlend()` computes
+   how much atmosphere sits between camera and board from `FOG.density` and the
+   camera distance, and it is painted on as a CSS overlay. Derived, not
+   eyeballed, so the two cannot drift apart — currently 6% at 24.94m.
+
+**Brightness and depth are separate controls.** Thinning the fog to fix "too
+dark" flattened the hall into a lit box with no distance in it. `EXPOSURE`
+carries the brightness; the fog stays dense enough to dissolve the far corners.
+The board sits at 94% transmittance, the far end of the room at 81%.
+
+**Quality tiers.** Four things dominate the frame budget, in order: the floor's
+real-time reflection (an extra render of the scene, blurred, every frame),
+device pixel ratio (quadratic — dpr 2 is 3.2M pixels on a 1600x900 canvas, dpr
+1.5 is 1.8M), depth of field (costliest post pass, and it cannot touch the board
+anyway), and shadow mapping. `balanced` keeps the reflection and the bloom,
+which are what the room is made of, and drops the other two. There is an fps
+readout in the controls, because the scene cannot be profiled from the
+environment it is written in.
+
 **The screen cannot be occluded, so nothing is allowed in front of it.**
 
 The board is DOM composited outside the WebGL canvas, which means 3D geometry

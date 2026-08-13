@@ -277,10 +277,86 @@ export const LIGHTS = {
  * board's transmittance to 0.52 and the haze was eating the one thing the
  * scene exists to show. Move the camera and this has to move with it.
  */
+/**
+ * Haze.
+ *
+ * There is a real tension here. Fog is most of what makes a room feel gloomy,
+ * but it is also all of what makes it feel deep — thinning it to fix "too dark"
+ * flattened the hall into a lit box with no distance in it.
+ *
+ * So the two jobs are split: EXPOSURE carries the brightness, and the fog is
+ * left dense enough to still dissolve the far corners. At this density the
+ * board sits at 94% transmittance — effectively unhazed — while the far end of
+ * the room is down at 81%.
+ */
 export const FOG = {
-  color: "#0d1119",
-  density: 0.012,
+  color: "#141a24",
+  density: 0.01,
 } as const;
+
+/**
+ * Global exposure.
+ *
+ * The single honest brightness control. Raising ambient light to fix "too dark"
+ * flattens everything, because it lifts the shadows as much as the highlights;
+ * exposure lifts the whole image and keeps the contrast that makes the room
+ * look lit rather than painted.
+ */
+export const EXPOSURE = 1.35;
+
+/**
+ * The screen as a light source.
+ *
+ * The strongest single cue that the board belongs to the room. In a real
+ * auditorium the audience is lit BY the screen — faces, seat backs and the
+ * reveals around the opening all catch it. Until this existed, nothing in the
+ * 3D scene acknowledged that a large bright rectangle was in the wall, which is
+ * most of why the board read as an overlay pasted on top.
+ */
+export const SCREEN_LIGHT = {
+  /** Sits just in front of the screen, throwing light back into the room. */
+  offsetZ: 1.2,
+  color: "#cfe0ff",
+  intensity: 26,
+  distance: 26,
+  /** A second, warmer bounce close in, to catch the reveals and the sill. */
+  reveal: {
+    color: "#ffe8c4",
+    intensity: 9,
+    distance: 7,
+  },
+} as const;
+
+/**
+ * The emissive halo behind the board.
+ *
+ * A plane slightly larger than the screen, sitting a few centimetres behind it
+ * inside the recess. The bloom pass picks it up and bleeds a glow out past the
+ * board's edges — and because that glow IS part of the WebGL render, it visually
+ * welds the DOM rectangle to the scene it is floating in front of.
+ */
+export const SCREEN_HALO = {
+  overscan: 0.55,
+  color: "#aebfd8",
+  intensity: 1.15,
+} as const;
+
+/**
+ * Atmospheric blend applied to the board in CSS.
+ *
+ * The board cannot receive the scene's fog, because it is composited outside
+ * the canvas. So the fog is computed for its distance and painted on as an
+ * overlay. Derived from FOG and CAMERA rather than eyeballed, so it stays
+ * correct when either changes.
+ */
+export function fogBlendAt(distance: number): number {
+  return 1 - Math.exp(-Math.pow(FOG.density * distance, 2));
+}
+
+/** How much fog sits between the camera and the board, 0..1. */
+export function boardFogBlend(): number {
+  return fogBlendAt(CAMERA.position[2] - ANCHORS.board.position[2]);
+}
 
 /**
  * Station fittings. These are what turn a big room into a platform.
@@ -407,6 +483,90 @@ export const POST = {
     darkness: 0.92,
   },
   noise: {
-    opacity: 0.035,
+    opacity: 0.03,
   },
 } as const;
+
+/**
+ * Quality tiers.
+ *
+ * The scene has four expensive things in it and they are all optional. In
+ * rough order of cost:
+ *
+ *   1. the floor's real-time reflection, which re-renders the scene into a
+ *      blurred buffer every frame — comfortably the most expensive item here;
+ *   2. device pixel ratio, which is quadratic: dpr 2 on a 1600x900 canvas is
+ *      3.2 million pixels shaded, dpr 1.5 is 1.8 million;
+ *   3. depth of field, the costliest post pass, and the one with the least to
+ *      show for itself since it cannot touch the board anyway;
+ *   4. shadow mapping, which costs an extra scene pass per shadowed light.
+ *
+ * "balanced" is the default: it keeps the reflection and the bloom, which are
+ * what the room is actually made of, and drops the two passes nobody would
+ * miss.
+ */
+export const QUALITY = {
+  high: {
+    label: "High",
+    dpr: [1, 2] as [number, number],
+    reflections: true,
+    reflectionResolution: 1024,
+    reflectionBlur: [340, 90] as [number, number],
+    depthOfField: true,
+    bloom: true,
+    shadows: true,
+    noise: true,
+  },
+  balanced: {
+    label: "Balanced",
+    dpr: [1, 1.5] as [number, number],
+    reflections: true,
+    reflectionResolution: 512,
+    reflectionBlur: [220, 60] as [number, number],
+    depthOfField: false,
+    bloom: true,
+    shadows: true,
+    noise: true,
+  },
+  performance: {
+    label: "Performance",
+    dpr: [1, 1] as [number, number],
+    reflections: false,
+    reflectionResolution: 256,
+    reflectionBlur: [140, 40] as [number, number],
+    depthOfField: false,
+    bloom: true,
+    shadows: false,
+    noise: false,
+  },
+} as const;
+
+export type QualityTier = keyof typeof QUALITY;
+
+/**
+ * How each person looks.
+ *
+ * Monochrome near-black figures read as blobs, not people. At this distance
+ * detail is invisible but VALUE and HUE are not — a different coat and a
+ * different hair colour is the whole difference between five silhouettes and
+ * five recognisable colleagues. Kept desaturated so the room stays cinematic
+ * and the board is still the brightest thing in it.
+ */
+export const AVATAR_LOOKS: Record<
+  string,
+  { coat: string; skin: string; hair: string; build: number; hairStyle: "short" | "bun" | "crop" }
+> = {
+  you: { coat: "#3d4a63", skin: "#c2957a", hair: "#2b2119", build: 1.0, hairStyle: "short" },
+  "bot-optimist": { coat: "#6a4a52", skin: "#d8ab8b", hair: "#4a2f24", build: 0.95, hairStyle: "bun" },
+  "bot-cynic": { coat: "#33404a", skin: "#a87c62", hair: "#201914", build: 1.06, hairStyle: "crop" },
+  "bot-contrarian": { coat: "#4a4b39", skin: "#8d6247", hair: "#171310", build: 0.97, hairStyle: "short" },
+  "bot-informed": { coat: "#3a3f4d", skin: "#c99e80", hair: "#5a4432", build: 1.02, hairStyle: "bun" },
+};
+
+export const AVATAR_FALLBACK_LOOK = {
+  coat: "#3a4050",
+  skin: "#b98d70",
+  hair: "#241c15",
+  build: 1.0,
+  hairStyle: "short" as const,
+};

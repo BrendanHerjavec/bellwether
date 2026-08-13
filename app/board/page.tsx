@@ -19,6 +19,7 @@ import { TotBoard } from "@/components/board/TotBoard";
 import type { AvatarInfo } from "@/components/hall/Avatars";
 import { TradingProvider, useTrading, YOU_ID } from "@/components/trading/TradingProvider";
 import { BOT_ROSTER } from "@/lib/bots";
+import { QUALITY, type QualityTier } from "@/lib/hall";
 
 // three must never be evaluated on the server.
 const Hall = dynamic(() => import("@/components/hall/Hall").then((m) => m.Hall), {
@@ -42,9 +43,10 @@ export default function BoardPage() {
 
 function BoardView() {
   const [mode, setMode] = useState<"hall" | "flat">("hall");
-  const [effects, setEffects] = useState(true);
+  const [quality, setQuality] = useState<QualityTier>("balanced");
   const [freeLook, setFreeLook] = useState(false);
   const [showLabels, setShowLabels] = useState(true);
+  const [fps, setFps] = useState<number | null>(null);
   // Read on this side of the Canvas and handed in as plain props. Context does
   // not cross R3F's reconciler boundary into the board's DOM portal.
   const { markets, trades, traders } = useTrading();
@@ -81,12 +83,13 @@ function BoardView() {
       {mode === "hall" ? (
         <div className="absolute inset-0">
           <Hall
-            effects={effects}
+            quality={quality}
             freeLook={freeLook}
             people={people}
             showLabels={showLabels}
             markets={markets}
             trades={trades}
+            onFps={setFps}
           />
         </div>
       ) : (
@@ -100,12 +103,13 @@ function BoardView() {
       <Controls
         mode={mode}
         setMode={setMode}
-        effects={effects}
-        setEffects={setEffects}
+        quality={quality}
+        setQuality={setQuality}
         freeLook={freeLook}
         setFreeLook={setFreeLook}
         showLabels={showLabels}
         setShowLabels={setShowLabels}
+        fps={mode === "hall" ? fps : null}
       />
     </div>
   );
@@ -114,21 +118,23 @@ function BoardView() {
 function Controls({
   mode,
   setMode,
-  effects,
-  setEffects,
+  quality,
+  setQuality,
   freeLook,
   setFreeLook,
   showLabels,
   setShowLabels,
+  fps,
 }: {
   mode: "hall" | "flat";
   setMode: (m: "hall" | "flat") => void;
-  effects: boolean;
-  setEffects: (v: boolean) => void;
+  quality: QualityTier;
+  setQuality: (q: QualityTier) => void;
   freeLook: boolean;
   setFreeLook: (v: boolean) => void;
   showLabels: boolean;
   setShowLabels: (v: boolean) => void;
+  fps: number | null;
 }) {
   const { botsRunning, setBotsRunning, activeBotIds, toggleBot, traders } = useTrading();
 
@@ -162,13 +168,20 @@ function Controls({
             >
               {freeLook ? "Free look" : "Locked camera"}
             </button>
-            <button
-              type="button"
-              className={`${button} ${effects ? on : off}`}
-              onClick={() => setEffects(!effects)}
-            >
-              {effects ? "Effects on" : "Effects off"}
-            </button>
+
+            {/* Quality tier. The reflection and the pixel ratio are most of the
+                cost; performance drops both. */}
+            {(Object.keys(QUALITY) as QualityTier[]).map((tier) => (
+              <button
+                key={tier}
+                type="button"
+                className={`${button} ${quality === tier ? on : off}`}
+                onClick={() => setQuality(tier)}
+              >
+                {QUALITY[tier].label}
+              </button>
+            ))}
+
             <button
               type="button"
               className={`${button} ${showLabels ? on : off}`}
@@ -176,6 +189,18 @@ function Controls({
             >
               {showLabels ? "Name tags" : "No tags"}
             </button>
+
+            {fps !== null && (
+              <span
+                className="rounded border border-white/10 px-2.5 py-1.5 font-mono text-[10px] tabular-nums"
+                style={{
+                  color: fps >= 50 ? "#6fca90" : fps >= 30 ? "#e0a94a" : "#d2705f",
+                }}
+                title="Sampled once a second"
+              >
+                {fps} fps
+              </span>
+            )}
           </>
         )}
 

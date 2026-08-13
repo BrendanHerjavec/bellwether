@@ -14,9 +14,14 @@ import {
   boardHtmlScale,
   LIGHTS,
   PODIUM,
+  QUALITY,
+  SCREEN_HALO,
+  SCREEN_LIGHT,
   SEATING,
   STATION,
   TICKER_HOUSING,
+  boardFogBlend,
+  type QualityTier,
 } from "./hall";
 
 /**
@@ -332,6 +337,70 @@ describe("the camera", () => {
 
   it("sees the back wall within its far plane", () => {
     expect(CAMERA.far).toBeGreaterThan(distance + HALL.depth);
+  });
+});
+
+describe("the board is graded into the scene", () => {
+  it("blends the board toward the fog by the amount actually between them", () => {
+    // The board is composited outside the WebGL canvas and receives none of
+    // the scene's fog, so it is painted on in CSS. Deriving it from the same
+    // constants is what stops the two drifting apart.
+    const distance = CAMERA.position[2] - ANCHORS.board.position[2];
+    const expected = 1 - Math.exp(-Math.pow(FOG.density * distance, 2));
+    expect(boardFogBlend()).toBeCloseTo(expected, 10);
+  });
+
+  it("grades the board without smothering it", () => {
+    // Enough to sit in the same air as the room, not so much that the odds
+    // stop being the brightest thing on screen.
+    const blend = boardFogBlend();
+    expect(blend).toBeGreaterThan(0.02);
+    expect(blend).toBeLessThan(0.2);
+  });
+
+  it("oversizes the bloom halo so it bleeds past the board's edges", () => {
+    // The halo is the only part of the board assembly the post chain can
+    // actually touch; if it were not larger than the board it would be hidden
+    // behind it and hide the seam it exists to hide.
+    expect(SCREEN_HALO.overscan).toBeGreaterThan(0.2);
+  });
+
+  it("puts the screen's own light in front of the screen", () => {
+    // Behind it, it would light the inside of the wall and nothing else.
+    expect(SCREEN_LIGHT.offsetZ).toBeGreaterThan(0);
+    // And it has to reach the front rows to be worth having.
+    const nearestRow = Math.min(...AVATARS.map((a) => a.position[2]));
+    const farthestRow = Math.max(...AVATARS.map((a) => a.position[2]));
+    const reach = farthestRow - ANCHORS.board.position[2];
+    expect(SCREEN_LIGHT.distance).toBeGreaterThan(reach);
+    expect(nearestRow).toBeGreaterThan(ANCHORS.board.position[2]);
+  });
+});
+
+describe("quality tiers", () => {
+  it("gets cheaper monotonically", () => {
+    const order: QualityTier[] = ["high", "balanced", "performance"];
+    for (let i = 1; i < order.length; i += 1) {
+      const richer = QUALITY[order[i - 1]];
+      const leaner = QUALITY[order[i]];
+      expect(leaner.dpr[1]).toBeLessThanOrEqual(richer.dpr[1]);
+      expect(leaner.reflectionResolution).toBeLessThanOrEqual(richer.reflectionResolution);
+    }
+  });
+
+  it("keeps bloom at every tier", () => {
+    // Bloom is what the emissive fixtures and the screen halo are made of.
+    // Losing it costs more than it saves.
+    for (const tier of Object.values(QUALITY)) {
+      expect(tier.bloom).toBe(true);
+    }
+  });
+
+  it("drops depth of field before it drops reflections", () => {
+    // DoF is the costliest pass and cannot touch the board anyway; the floor
+    // reflection is the best-looking thing in the room.
+    expect(QUALITY.balanced.depthOfField).toBe(false);
+    expect(QUALITY.balanced.reflections).toBe(true);
   });
 });
 

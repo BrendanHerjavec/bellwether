@@ -4,20 +4,22 @@ import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
-import { AVATARS } from "@/lib/hall";
+import { AVATARS, AVATAR_FALLBACK_LOOK, AVATAR_LOOKS } from "@/lib/hall";
 
 /**
  * The people in the room.
  *
- * Built from primitives on purpose. They are seen from behind at 10-30 metres
- * with the brightest object in the room directly in front of them, so what
- * reaches the camera is a silhouette with a rim of board-light down one side.
- * Detail would be invisible; proportion and stance are the only things that
- * read, and those are cheap to get right. Modelled faces at this distance is
- * how a scene starts looking like a video game.
+ * Built from primitives, but no longer monochrome. A figure rendered in a
+ * single near-black material reads as a blob, however good its proportions
+ * are — at this distance detail is invisible but value and hue are not, so
+ * a coat, a skin tone and a hair colour is the entire difference between five
+ * silhouettes and five recognisable colleagues.
+ *
+ * Everything stays desaturated. The board still has to be the brightest thing
+ * in the room, and a row of primary-coloured characters would take that away.
  *
  * They are the actual traders, not extras — you plus the four bots. When the
- * cynic sells the roadmap market down, that is his silhouette in the crowd.
+ * cynic sells the roadmap market down, that is his back in the third row.
  */
 
 export interface AvatarInfo {
@@ -48,83 +50,123 @@ function Figure({
   showLabel: boolean;
 }) {
   const group = useRef<THREE.Group>(null);
+  const look = AVATAR_LOOKS[info.id] ?? AVATAR_FALLBACK_LOOK;
 
-  // Very dark: these are silhouettes, and the board behind supplies the edge.
-  const body = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: info.isYou ? "#1b2030" : "#12151b",
-        roughness: 0.85,
-        metalness: 0.05,
-      }),
-    [info.isYou],
-  );
+  // Three materials per person, memoised so five figures cost three shader
+  // programs between them rather than fifty-five.
+  const materials = useMemo(() => {
+    const coat = new THREE.MeshStandardMaterial({
+      color: look.coat,
+      roughness: 0.88,
+      metalness: 0.02,
+    });
+    const skin = new THREE.MeshStandardMaterial({
+      color: look.skin,
+      roughness: 0.72,
+      metalness: 0.0,
+    });
+    const hair = new THREE.MeshStandardMaterial({
+      color: look.hair,
+      roughness: 0.82,
+      metalness: 0.02,
+    });
+    return { coat, skin, hair };
+  }, [look.coat, look.skin, look.hair]);
 
   useFrame((state) => {
     if (!group.current) return;
     const t = state.clock.elapsedTime + phase;
-    // Settling in a seat and breathing. Smaller than the standing sway was —
-    // seated people move less — but without it five statues make the room feel
-    // abandoned.
     group.current.position.y = Math.sin(t * 0.8) * 0.008;
     group.current.rotation.y = Math.sin(t * 0.27) * 0.05;
   });
 
+  const build = look.build;
+
   return (
     <group position={[position[0], position[1], position[2]]} scale={scale}>
       {/*
-        Seated. Head lands at AVATAR.seatedHeadHeight, which must stay below the
-        camera's eye height — that is what guarantees a head can never overlap
-        the screen, since anything below the camera projects below the horizon.
+        Seated. The head lands below the camera's eye height, which is what
+        guarantees it can never overlap the screen — see lib/hall.test.ts.
       */}
       <group ref={group}>
         {/* Head */}
-        <mesh position={[0, 1.19, 0]} material={body} castShadow>
-          <sphereGeometry args={[0.115, 20, 16]} />
+        <mesh position={[0, 1.19, 0]} material={materials.skin} castShadow>
+          <sphereGeometry args={[0.113, 20, 16]} />
         </mesh>
+
+        {/* Hair, as a slightly larger cap sitting over the back of the skull.
+            From behind this is most of what identifies someone. */}
+        <mesh position={[0, 1.205, -0.012]} material={materials.hair} castShadow>
+          <sphereGeometry args={[0.119, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.62]} />
+        </mesh>
+        {look.hairStyle === "bun" && (
+          <mesh position={[0, 1.235, -0.105]} material={materials.hair}>
+            <sphereGeometry args={[0.062, 14, 12]} />
+          </mesh>
+        )}
+        {look.hairStyle === "short" && (
+          <mesh position={[0, 1.14, -0.055]} material={materials.hair}>
+            <sphereGeometry args={[0.108, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.5]} />
+          </mesh>
+        )}
+
         {/* Neck */}
-        <mesh position={[0, 1.06, 0]} material={body}>
-          <cylinderGeometry args={[0.05, 0.06, 0.09, 10]} />
+        <mesh position={[0, 1.06, 0]} material={materials.skin}>
+          <cylinderGeometry args={[0.048, 0.058, 0.09, 10]} />
         </mesh>
-        {/* Torso, upright against the seat back */}
-        <mesh position={[0, 0.75, -0.02]} rotation={[-0.1, 0, 0]} material={body} castShadow>
-          <cylinderGeometry args={[0.155, 0.205, 0.56, 16]} />
+
+        {/* Torso */}
+        <mesh
+          position={[0, 0.75, -0.02]}
+          rotation={[-0.1, 0, 0]}
+          material={materials.coat}
+          castShadow
+        >
+          <cylinderGeometry args={[0.155 * build, 0.205 * build, 0.56, 18]} />
         </mesh>
-        {/* Shoulders */}
-        <mesh position={[0, 0.98, -0.01]} material={body}>
-          <sphereGeometry args={[0.195, 16, 12]} />
+        <mesh position={[0, 0.98, -0.01]} material={materials.coat} castShadow>
+          <sphereGeometry args={[0.195 * build, 18, 14]} />
         </mesh>
-        {/* Thighs, forward and level with the seat */}
+
+        {/* Thighs */}
         {[-0.085, 0.085].map((x) => (
           <mesh
             key={`t${x}`}
             position={[x, 0.47, 0.19]}
             rotation={[Math.PI / 2, 0, 0]}
-            material={body}
+            material={materials.coat}
           >
             <cylinderGeometry args={[0.075, 0.065, 0.46, 10]} />
           </mesh>
         ))}
-        {/* Shins, dropping to the floor */}
+        {/* Shins */}
         {[-0.085, 0.085].map((x) => (
-          <mesh key={`s${x}`} position={[x, 0.22, 0.4]} material={body}>
+          <mesh key={`s${x}`} position={[x, 0.22, 0.4]} material={materials.coat}>
             <cylinderGeometry args={[0.058, 0.05, 0.46, 10]} />
           </mesh>
         ))}
-        {/* Upper arms down the sides, forearms resting on the thighs */}
-        {[-0.215, 0.215].map((x) => (
-          <mesh key={`a${x}`} position={[x, 0.76, 0]} material={body}>
+
+        {/* Upper arms */}
+        {[-0.215 * build, 0.215 * build].map((x) => (
+          <mesh key={`a${x}`} position={[x, 0.76, 0]} material={materials.coat}>
             <cylinderGeometry args={[0.05, 0.045, 0.44, 10]} />
           </mesh>
         ))}
-        {[-0.2, 0.2].map((x) => (
+        {/* Forearms resting on the thighs */}
+        {[-0.2 * build, 0.2 * build].map((x) => (
           <mesh
             key={`f${x}`}
             position={[x, 0.56, 0.16]}
             rotation={[Math.PI / 2, 0, 0]}
-            material={body}
+            material={materials.coat}
           >
             <cylinderGeometry args={[0.045, 0.042, 0.36, 10]} />
+          </mesh>
+        ))}
+        {/* Hands */}
+        {[-0.2 * build, 0.2 * build].map((x) => (
+          <mesh key={`h${x}`} position={[x, 0.55, 0.34]} material={materials.skin}>
+            <sphereGeometry args={[0.05, 12, 10]} />
           </mesh>
         ))}
       </group>

@@ -1,6 +1,7 @@
 "use client";
 
-import { Canvas } from "@react-three/fiber";
+import { useEffect, useRef } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
 import { Html, OrbitControls } from "@react-three/drei";
 import {
   Bloom,
@@ -9,6 +10,7 @@ import {
   Noise,
   Vignette,
 } from "@react-three/postprocessing";
+import * as THREE from "three";
 import { TotBoardView } from "@/components/board/TotBoard";
 import type { TradeRecord } from "@/components/trading/TradingProvider";
 import type { Market } from "@/lib/markets";
@@ -18,10 +20,22 @@ import {
   Lights,
   Podium,
   Room,
+  ScreenHalo,
+  ScreenLight,
   TickerHousing,
 } from "./HallScene";
 import { Avatars, type AvatarInfo } from "./Avatars";
-import { BOARD, CAMERA, FOG, POST, boardHtmlScale } from "@/lib/hall";
+import {
+  BOARD,
+  CAMERA,
+  EXPOSURE,
+  FOG,
+  POST,
+  QUALITY,
+  boardFogBlend,
+  boardHtmlScale,
+  type QualityTier,
+} from "@/lib/hall";
 
 /**
  * The exchange hall.
@@ -34,48 +48,56 @@ import { BOARD, CAMERA, FOG, POST, boardHtmlScale } from "@/lib/hall";
  * CSS3DRenderer at all — the digits stay real text at projector resolution
  * instead of becoming a blurry texture. The cost is that the post-processing
  * below cannot touch the board: no bloom on the glyphs, no depth of field, and
- * no WebGL geometry can occlude it. The board's glow is done in CSS instead, in
- * splitflap.css, tuned to sit alongside the bloom rather than come from it.
+ * no WebGL geometry can occlude it.
+ *
+ * Three things compensate, because "it looks like an overlay" is the direct
+ * consequence of that trade:
+ *
+ *   1. ScreenLight puts real lights where the board is, so the room is lit BY
+ *      the screen — reveals, seat backs and the nearest heads all catch it.
+ *   2. ScreenHalo is an emissive plane just behind the board that the bloom
+ *      pass blooms, bleeding glow past the DOM edges and hiding the seam.
+ *   3. The board carries a CSS grade computed from the scene's own fog, so it
+ *      sits in the same atmosphere as everything around it.
  *
  * If you ever want the board blurred by the DoF pass, the only way is to render
  * it to a texture, and that gives up the crispness the whole approach exists to
  * protect. Do not do it.
  */
 export function Hall({
-  effects = true,
+  quality: tier = "balanced",
   freeLook = false,
   people,
   showLabels = true,
   markets,
   trades,
+  onFps,
 }: {
-  effects?: boolean;
-  /**
-   * Hands the camera over. The slow drift and free look are mutually exclusive
-   * — both writing to the camera every frame means neither wins.
-   */
+  quality?: QualityTier;
   freeLook?: boolean;
   people: Record<string, AvatarInfo>;
   showLabels?: boolean;
   /*
-   * Passed as plain props, not read from context.
-   *
-   * React context does not survive the crossing into R3F's reconciler and out
-   * again through drei's <Html> portal. The context-reading board threw
-   * "useTrading must be used inside a TradingProvider" and took the whole scene
-   * down; re-providing the context inside the Canvas did not fix it either.
-   * Props cross the boundary reliably, so the boundary is where they start.
+   * Passed as plain props, not read from context. React context does not
+   * survive the crossing into R3F's reconciler and out again through drei's
+   * <Html> portal.
    */
   markets: Market[];
   trades: TradeRecord[];
+  onFps?: (fps: number) => void;
 }) {
+  const quality = QUALITY[tier];
+
   return (
     <Canvas
-      // "percentage" maps to PCFShadowMap. The default soft map is deprecated
-      // in three 0.185 and silently falls back to this anyway, with a warning.
-      shadows="percentage"
-      dpr={[1, 2]}
-      gl={{ antialias: true, powerPreference: "high-performance" }}
+      shadows={quality.shadows ? "percentage" : false}
+      dpr={quality.dpr}
+      gl={{
+        antialias: tier === "high",
+        powerPreference: "high-performance",
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: EXPOSURE,
+      }}
       camera={{
         position: [...CAMERA.position],
         fov: CAMERA.fov,
@@ -83,9 +105,11 @@ export function Hall({
         far: CAMERA.far,
       }}
     >
-      <color attach="background" args={["#05060a"]} />
+      <color attach="background" args={["#0a0e15"]} />
       {/* Exponential haze, so the walls dissolve instead of ending at a seam. */}
       <fogExp2 attach="fog" args={[FOG.color, FOG.density]} />
+
+      {onFps && <FpsProbe onFps={onFps} />}
 
       {freeLook ? (
         <OrbitControls
@@ -93,7 +117,7 @@ export function Hall({
           enablePan
           enableZoom
           // Kept above the floor and out of the ceiling, so it is impossible to
-          // end up underneath the platform wondering where the room went.
+          // end up underneath the room wondering where it went.
           maxPolarAngle={Math.PI * 0.495}
           minDistance={4}
           maxDistance={70}
@@ -105,7 +129,9 @@ export function Hall({
       )}
 
       <Lights />
-      <Room />
+      <ScreenLight />
+      <Room quality={quality} />
+      <ScreenHalo />
       <TickerHousing />
       <Podium />
       <Avatars people={people} showLabels={showLabels} />
@@ -125,30 +151,68 @@ export function Hall({
             markets={markets}
             trades={trades}
             widthPx={BOARD.pixelWidth}
+            // Puts the board in the same atmosphere as the room around it.
+            fogBlend={boardFogBlend()}
+            fogColor={FOG.color}
           />
         </Html>
       </BoardHousing>
 
-      {effects && (
-        <EffectComposer>
-          <DepthOfField
-            focusDistance={POST.depthOfField.focusDistance}
-            focalLength={POST.depthOfField.focalLength}
-            bokehScale={POST.depthOfField.bokehScale}
-          />
-          <Bloom
-            intensity={POST.bloom.intensity}
-            luminanceThreshold={POST.bloom.luminanceThreshold}
-            luminanceSmoothing={POST.bloom.luminanceSmoothing}
-            mipmapBlur={POST.bloom.mipmapBlur}
-          />
+      <EffectComposer enabled={quality.bloom || quality.depthOfField}>
+        <>
+          {quality.depthOfField && (
+            <DepthOfField
+              focusDistance={POST.depthOfField.focusDistance}
+              focalLength={POST.depthOfField.focalLength}
+              bokehScale={POST.depthOfField.bokehScale}
+            />
+          )}
+          {quality.bloom && (
+            <Bloom
+              intensity={POST.bloom.intensity}
+              luminanceThreshold={POST.bloom.luminanceThreshold}
+              luminanceSmoothing={POST.bloom.luminanceSmoothing}
+              mipmapBlur={POST.bloom.mipmapBlur}
+            />
+          )}
           <Vignette
             offset={POST.vignette.offset}
             darkness={POST.vignette.darkness}
           />
-          <Noise opacity={POST.noise.opacity} />
-        </EffectComposer>
-      )}
+          {quality.noise && <Noise opacity={POST.noise.opacity} />}
+        </>
+      </EffectComposer>
     </Canvas>
   );
+}
+
+/**
+ * Frame rate, sampled once a second and reported out to the page.
+ *
+ * Here because the scene cannot be profiled from the environment it is written
+ * in — WebGL never initialises in a headless pane — so the only way to know
+ * whether the quality tiers actually did anything is to put the number on
+ * screen and let someone read it back.
+ */
+function FpsProbe({ onFps }: { onFps: (fps: number) => void }) {
+  const frames = useRef(0);
+  const since = useRef(0);
+  const report = useRef(onFps);
+
+  useEffect(() => {
+    report.current = onFps;
+  });
+
+  useFrame((state) => {
+    frames.current += 1;
+    const elapsed = state.clock.elapsedTime;
+    if (since.current === 0) since.current = elapsed;
+    if (elapsed - since.current >= 1) {
+      report.current(Math.round(frames.current / (elapsed - since.current)));
+      frames.current = 0;
+      since.current = elapsed;
+    }
+  });
+
+  return null;
 }

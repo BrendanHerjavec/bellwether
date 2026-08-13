@@ -6,7 +6,10 @@ import { MeshReflectorMaterial } from "@react-three/drei";
 import * as THREE from "three";
 import {
   ANCHORS,
+  BOARD,
   BOARD_FRAME,
+  SCREEN_HALO,
+  SCREEN_LIGHT,
   CAMERA,
   CAMERA_DRIFT,
   COLUMNS,
@@ -14,9 +17,11 @@ import {
   HALL,
   LIGHTS,
   PODIUM,
+  QUALITY,
   SEATING,
   STATION,
   TICKER_HOUSING,
+  type QualityTier,
 } from "@/lib/hall";
 import { concreteTexture, repeatFor, subwayTileTexture } from "./textures";
 
@@ -58,7 +63,7 @@ export function CameraDrift() {
  * built. The tile is doing enormous work here — it is the difference between a
  * dark room with a screen in it and somewhere you recognise.
  */
-export function Room() {
+export function Room({ quality }: { quality: (typeof QUALITY)[QualityTier] }) {
   const { width, height, depth, backWallZ } = HALL;
   const midZ = backWallZ + depth / 2;
   const tileH = STATION.tileHeight;
@@ -85,18 +90,29 @@ export function Room() {
           only expensive material in the scene. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, midZ]} receiveShadow>
         <planeGeometry args={[width, depth]} />
-        <MeshReflectorMaterial
-          blur={[...FLOOR.blur]}
-          resolution={FLOOR.resolution}
-          mixBlur={FLOOR.mixBlur}
-          mixStrength={FLOOR.mixStrength}
-          roughness={FLOOR.roughness}
-          depthScale={FLOOR.depthScale}
-          minDepthThreshold={FLOOR.minDepthThreshold}
-          maxDepthThreshold={FLOOR.maxDepthThreshold}
-          color={FLOOR.color}
-          metalness={FLOOR.metalness}
-        />
+        {quality.reflections ? (
+          <MeshReflectorMaterial
+            blur={[...quality.reflectionBlur]}
+            resolution={quality.reflectionResolution}
+            mixBlur={FLOOR.mixBlur}
+            mixStrength={FLOOR.mixStrength}
+            roughness={FLOOR.roughness}
+            depthScale={FLOOR.depthScale}
+            minDepthThreshold={FLOOR.minDepthThreshold}
+            maxDepthThreshold={FLOOR.maxDepthThreshold}
+            color={FLOOR.color}
+            metalness={FLOOR.metalness}
+          />
+        ) : (
+          // Performance tier: a plain polished floor. It loses the reflection,
+          // which is the best thing in the scene, but it also removes an entire
+          // extra render of everything, every frame.
+          <meshStandardMaterial
+            color={FLOOR.color}
+            roughness={0.35}
+            metalness={0.55}
+          />
+        )}
       </mesh>
 
       {/* The painted safety line. One stripe, and the floor becomes a platform. */}
@@ -366,6 +382,60 @@ function Columns() {
 }
 
 /* ----------------------------------------------------------------- lights */
+
+/**
+ * The screen, treated as a light.
+ *
+ * Nothing else in this file matters as much for making the board feel part of
+ * the room. A large bright rectangle in a wall lights what is in front of it,
+ * and until this existed the 3D scene behaved as though the board were not
+ * there at all — which is exactly what "it feels like an overlay" means.
+ */
+export function ScreenLight() {
+  const [ax, ay, az] = ANCHORS.board.position;
+  return (
+    <group>
+      {/* Cool spill out into the audience. */}
+      <pointLight
+        position={[ax, ay, az + SCREEN_LIGHT.offsetZ]}
+        color={SCREEN_LIGHT.color}
+        intensity={SCREEN_LIGHT.intensity}
+        distance={SCREEN_LIGHT.distance}
+      />
+      {/* Warm bounce close in, catching the reveals and the sill. */}
+      <pointLight
+        position={[ax, ay, az + 0.35]}
+        color={SCREEN_LIGHT.reveal.color}
+        intensity={SCREEN_LIGHT.reveal.intensity}
+        distance={SCREEN_LIGHT.reveal.distance}
+      />
+    </group>
+  );
+}
+
+/**
+ * The emissive halo sitting just behind the board.
+ *
+ * Slightly oversized, so the bloom pass bleeds a glow out past the DOM board's
+ * edges. That glow is part of the WebGL render, so it overlaps the boundary
+ * between the two composited layers and hides the seam.
+ */
+export function ScreenHalo() {
+  const [ax, ay, az] = ANCHORS.board.position;
+  const width = BOARD.pixelWidth * BOARD.metresPerPixel + SCREEN_HALO.overscan;
+  const height = BOARD.pixelHeight * BOARD.metresPerPixel + SCREEN_HALO.overscan;
+  return (
+    <mesh position={[ax, ay, az - 0.04]}>
+      <planeGeometry args={[width, height]} />
+      <meshBasicMaterial
+        color={SCREEN_HALO.color}
+        toneMapped={false}
+        transparent
+        opacity={SCREEN_HALO.intensity > 1 ? 1 : SCREEN_HALO.intensity}
+      />
+    </mesh>
+  );
+}
 
 export function Lights() {
   const keyRef = useRef<THREE.SpotLight>(null);

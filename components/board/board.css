@@ -86,6 +86,53 @@
     0 0 140px -40px rgba(255, 190, 120, 0.22);
 }
 
+/*
+ * The board, graded into the 3D scene.
+ *
+ * Only applied when the board is mounted inside the hall. It is composited
+ * outside the WebGL canvas, so it receives none of the scene's fog, bloom or
+ * colour grade — without this it is a clean bright rectangle pasted over a
+ * hazy, warm-lit room, which is exactly what "it feels like an overlay" means.
+ *
+ * The fog amount is computed from the scene's own FOG.density and the camera's
+ * distance to the board, so it tracks whenever either changes.
+ */
+.board--in-scene {
+  position: relative;
+  /* Slight desaturation and lift, matching the tone-mapped render. */
+  filter: saturate(0.9) contrast(0.97);
+}
+
+/* Atmosphere between the camera and the board. */
+.board--in-scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  pointer-events: none;
+  z-index: 30;
+  background: var(--board-fog-color, #141a24);
+  opacity: var(--board-fog, 0);
+}
+
+/*
+ * Falloff toward the edges, standing in for the vignette and depth of field
+ * the post chain applies to everything except this element.
+ */
+.board--in-scene::before {
+  content: "";
+  position: absolute;
+  inset: -2%;
+  border-radius: 14px;
+  pointer-events: none;
+  z-index: 29;
+  background: radial-gradient(
+    ellipse 78% 74% at 50% 42%,
+    rgba(0, 0, 0, 0) 55%,
+    rgba(6, 8, 12, 0.42) 100%
+  );
+}
+
 /* The recess the flap rows sit in, darker than the frame around it. */
 .board__well {
   position: relative;
