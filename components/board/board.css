@@ -99,8 +99,16 @@
  */
 .board--in-scene {
   position: relative;
-  /* Slight desaturation and lift, matching the tone-mapped render. */
-  filter: saturate(0.9) contrast(0.97);
+  /*
+   * There was a `filter: saturate() contrast()` here. It is gone on purpose.
+   *
+   * A CSS filter forces the browser to rasterise the entire element into a
+   * buffer and run a shader pass over it. On a 1500x730 element holding
+   * thousands of nodes, inside a wrapper that drei re-transforms every frame,
+   * that pass ran 60 times a second and was a large part of why the page sat at
+   * 10fps with unclickable buttons. The tint below achieves nearly the same
+   * thing as a plain composited overlay, which costs nothing.
+   */
 }
 
 /* Atmosphere between the camera and the board. */

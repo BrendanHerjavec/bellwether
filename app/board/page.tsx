@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { TotBoard } from "@/components/board/TotBoard";
 import type { AvatarInfo } from "@/components/hall/Avatars";
+import type { CameraMode } from "@/components/hall/Hall";
 import { TradingProvider, useTrading, YOU_ID } from "@/components/trading/TradingProvider";
 import { BOT_ROSTER } from "@/lib/bots";
 import { QUALITY, type QualityTier } from "@/lib/hall";
@@ -33,6 +34,13 @@ const Hall = dynamic(() => import("@/components/hall/Hall").then((m) => m.Hall),
   ),
 });
 
+const CAMERA_MODES: { id: CameraMode; label: string; hint: string }[] = [
+  { id: "locked", label: "Locked", hint: "Still camera. By far the fastest — a moving camera forces the board's DOM to re-rasterise every frame." },
+  { id: "walk", label: "Walk", hint: "Drag to look, WASD to move, shift to hurry. The cursor stays yours." },
+  { id: "orbit", label: "Orbit", hint: "Drag to orbit, scroll to zoom, right-drag to pan." },
+  { id: "drift", label: "Drift", hint: "Slow idle float. Looks best, costs the most." },
+];
+
 export default function BoardPage() {
   return (
     <TradingProvider>
@@ -44,7 +52,7 @@ export default function BoardPage() {
 function BoardView() {
   const [mode, setMode] = useState<"hall" | "flat">("hall");
   const [quality, setQuality] = useState<QualityTier>("balanced");
-  const [freeLook, setFreeLook] = useState(false);
+  const [cameraMode, setCameraMode] = useState<CameraMode>("locked");
   const [showLabels, setShowLabels] = useState(true);
   const [fps, setFps] = useState<number | null>(null);
   // Read on this side of the Canvas and handed in as plain props. Context does
@@ -84,7 +92,7 @@ function BoardView() {
         <div className="absolute inset-0">
           <Hall
             quality={quality}
-            freeLook={freeLook}
+            cameraMode={cameraMode}
             people={people}
             showLabels={showLabels}
             markets={markets}
@@ -105,8 +113,8 @@ function BoardView() {
         setMode={setMode}
         quality={quality}
         setQuality={setQuality}
-        freeLook={freeLook}
-        setFreeLook={setFreeLook}
+        cameraMode={cameraMode}
+        setCameraMode={setCameraMode}
         showLabels={showLabels}
         setShowLabels={setShowLabels}
         fps={mode === "hall" ? fps : null}
@@ -120,8 +128,8 @@ function Controls({
   setMode,
   quality,
   setQuality,
-  freeLook,
-  setFreeLook,
+  cameraMode,
+  setCameraMode,
   showLabels,
   setShowLabels,
   fps,
@@ -130,8 +138,8 @@ function Controls({
   setMode: (m: "hall" | "flat") => void;
   quality: QualityTier;
   setQuality: (q: QualityTier) => void;
-  freeLook: boolean;
-  setFreeLook: (v: boolean) => void;
+  cameraMode: CameraMode;
+  setCameraMode: (m: CameraMode) => void;
   showLabels: boolean;
   setShowLabels: (v: boolean) => void;
   fps: number | null;
@@ -160,14 +168,20 @@ function Controls({
 
         {mode === "hall" && (
           <>
-            <button
-              type="button"
-              className={`${button} ${freeLook ? on : off}`}
-              onClick={() => setFreeLook(!freeLook)}
-              title="Drag to orbit, scroll to zoom, right-drag to pan"
-            >
-              {freeLook ? "Free look" : "Locked camera"}
-            </button>
+            {/* Camera. "Locked" is the cheap one: a still camera means drei
+                writes the same CSS matrix each frame and the browser skips
+                re-rasterising the board's DOM entirely. */}
+            {CAMERA_MODES.map(({ id, label, hint }) => (
+              <button
+                key={id}
+                type="button"
+                className={`${button} ${cameraMode === id ? on : off}`}
+                onClick={() => setCameraMode(id)}
+                title={hint}
+              >
+                {label}
+              </button>
+            ))}
 
             {/* Quality tier. The reflection and the pixel ratio are most of the
                 cost; performance drops both. */}

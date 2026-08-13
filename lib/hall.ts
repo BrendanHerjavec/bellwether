@@ -501,9 +501,18 @@ export const POST = {
  *      show for itself since it cannot touch the board anyway;
  *   4. shadow mapping, which costs an extra scene pass per shadowed light.
  *
- * "balanced" is the default: it keeps the reflection and the bloom, which are
- * what the room is actually made of, and drops the two passes nobody would
- * miss.
+ * ...except none of that was the actual problem, which is worth recording.
+ *
+ * The board is a <Html transform>, and drei rewrites its wrapper's CSS matrix
+ * on EVERY frame. That wrapper holds thousands of DOM nodes with preserve-3d,
+ * gradients and box-shadows, so each rewrite re-rasterises the lot on the main
+ * thread — which is why the page sat at 10fps with buttons that would not
+ * respond. A GPU bottleneck cannot block a click; a main-thread one can.
+ *
+ * So `boardPixelWidth` is the most valuable number here. The board displays
+ * around 630 CSS pixels wide on a 1600px canvas, so rendering it at 1500 was
+ * paying for more than twice the DOM and raster area than could ever be seen.
+ * Dropping it also drops the drum count, which is where the nodes are.
  */
 export const QUALITY = {
   high: {
@@ -516,6 +525,7 @@ export const QUALITY = {
     bloom: true,
     shadows: true,
     noise: true,
+    boardPixelWidth: 1400,
   },
   balanced: {
     label: "Balanced",
@@ -525,8 +535,9 @@ export const QUALITY = {
     reflectionBlur: [220, 60] as [number, number],
     depthOfField: false,
     bloom: true,
-    shadows: true,
-    noise: true,
+    shadows: false,
+    noise: false,
+    boardPixelWidth: 1100,
   },
   performance: {
     label: "Performance",
@@ -538,6 +549,7 @@ export const QUALITY = {
     bloom: true,
     shadows: false,
     noise: false,
+    boardPixelWidth: 850,
   },
 } as const;
 

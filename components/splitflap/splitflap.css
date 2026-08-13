@@ -181,9 +181,19 @@
 
 /* --- the seam ------------------------------------------------------------ */
 
-/* The hairline where the two halves meet, plus the shadow the upper card casts
-   onto the lower one. Sits above everything so it is never occluded mid-flip. */
-.flap__seam {
+/*
+ * The hairline where the two halves meet, plus the shadow the upper card casts
+ * onto the lower one.
+ *
+ * Drawn as a pseudo-element rather than a real div, and the axle pins that used
+ * to sit either side of it are gone. That sounds like fussy micro-optimisation
+ * and is not: the board carries hundreds of these units, it lives inside a
+ * <Html transform> whose wrapper is re-transformed by drei on every frame, and
+ * the browser re-rasterises the whole subtree when it moves. Three fewer real
+ * elements per drum removed about a thousand nodes from that subtree.
+ */
+.flap::after {
+  content: "";
   position: absolute;
   left: 0;
   right: 0;
@@ -194,27 +204,6 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
   z-index: 4;
   pointer-events: none;
-}
-
-/* Tiny axle pins on either side of the seam. Small detail, reads instantly. */
-.flap__pin {
-  position: absolute;
-  top: 50%;
-  width: 2px;
-  height: 4px;
-  margin-top: -2px;
-  border-radius: 1px;
-  background: linear-gradient(180deg, #4a505c, #23272f);
-  z-index: 5;
-  pointer-events: none;
-}
-
-.flap__pin--left {
-  left: -1px;
-}
-
-.flap__pin--right {
-  right: -1px;
 }
 
 /* --- groupings ----------------------------------------------------------- */

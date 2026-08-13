@@ -206,9 +206,9 @@ export function SplitFlapChar({
         <div className="flap__shade" ref={shadeBackRef} />
       </div>
 
-      <div className="flap__seam" />
-      <div className="flap__pin flap__pin--left" />
-      <div className="flap__pin flap__pin--right" />
+      {/* The seam is drawn by .flap::after, and the axle pins are gone. Both
+          were real elements on every drum, and this subtree is re-rasterised
+          whenever the camera moves. */}
     </div>
   );
 }

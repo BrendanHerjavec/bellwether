@@ -25,6 +25,7 @@ import {
   TickerHousing,
 } from "./HallScene";
 import { Avatars, type AvatarInfo } from "./Avatars";
+import { WalkControls } from "./WalkControls";
 import {
   BOARD,
   CAMERA,
@@ -64,9 +65,11 @@ import {
  * it to a texture, and that gives up the crispness the whole approach exists to
  * protect. Do not do it.
  */
+export type CameraMode = "locked" | "drift" | "walk" | "orbit";
+
 export function Hall({
   quality: tier = "balanced",
-  freeLook = false,
+  cameraMode = "locked",
   people,
   showLabels = true,
   markets,
@@ -74,7 +77,15 @@ export function Hall({
   onFps,
 }: {
   quality?: QualityTier;
-  freeLook?: boolean;
+  /**
+   * Defaults to "locked", and that is a performance decision, not a taste one.
+   *
+   * A moving camera changes the CSS matrix drei writes onto the board's wrapper
+   * every frame, which re-rasterises thousands of DOM nodes on the main thread.
+   * A still camera writes the same string each frame and the browser skips the
+   * work entirely. Drift is lovely and it is not free.
+   */
+  cameraMode?: CameraMode;
   people: Record<string, AvatarInfo>;
   showLabels?: boolean;
   /*
@@ -111,7 +122,7 @@ export function Hall({
 
       {onFps && <FpsProbe onFps={onFps} />}
 
-      {freeLook ? (
+      {cameraMode === "orbit" && (
         <OrbitControls
           target={[...CAMERA.target]}
           enablePan
@@ -124,9 +135,9 @@ export function Hall({
           dampingFactor={0.08}
           enableDamping
         />
-      ) : (
-        <CameraDrift />
       )}
+      {cameraMode === "drift" && <CameraDrift />}
+      <WalkControls enabled={cameraMode === "walk"} />
 
       <Lights />
       <ScreenLight />
@@ -139,18 +150,24 @@ export function Hall({
       <BoardHousing>
         <Html
           transform
-          // Not metres-per-pixel: drei maps 400px onto 10 units at scale 1.
-          scale={boardHtmlScale}
+          /*
+           * Scaled so the board occupies the same world size whatever pixel
+           * width the quality tier renders it at. A smaller pixel width means
+           * fewer drums and fewer DOM nodes in the subtree drei re-transforms
+           * every frame, which is the dominant cost in this scene — and the
+           * board only displays around 630 CSS pixels wide anyway.
+           */
+          scale={boardHtmlScale * (BOARD.pixelWidth / quality.boardPixelWidth)}
           position={[0, 0, 0.02]}
           // Without this the board is captured into the canvas's own stacking
           // context and disappears behind the effect composer's output.
           zIndexRange={[10, 0]}
-          style={{ width: `${BOARD.pixelWidth}px`, pointerEvents: "none" }}
+          style={{ width: `${quality.boardPixelWidth}px`, pointerEvents: "none" }}
         >
           <TotBoardView
             markets={markets}
             trades={trades}
-            widthPx={BOARD.pixelWidth}
+            widthPx={quality.boardPixelWidth}
             // Puts the board in the same atmosphere as the room around it.
             fogBlend={boardFogBlend()}
             fogColor={FOG.color}

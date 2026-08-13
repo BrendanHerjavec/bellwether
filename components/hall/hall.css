@@ -19,9 +19,11 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #b9c0cf;
-  background: rgba(8, 10, 14, 0.72);
+  background: rgba(8, 10, 14, 0.86);
   border: 1px solid rgba(255, 255, 255, 0.09);
-  backdrop-filter: blur(2px);
+  /* No backdrop-filter. It is one of the most expensive things in CSS, it was
+     applied to five elements that move every frame, and at this size nobody
+     could see it. */
   user-select: none;
   transition:
     color 260ms ease,
