@@ -87,59 +87,15 @@
 }
 
 /*
- * The board, graded into the 3D scene.
+ * There was a `.board--in-scene` grade here: a fog tint and an edge falloff
+ * painted onto the board in CSS, because the board was composited outside the
+ * WebGL canvas and received none of the scene's atmosphere.
  *
- * Only applied when the board is mounted inside the hall. It is composited
- * outside the WebGL canvas, so it receives none of the scene's fog, bloom or
- * colour grade — without this it is a clean bright rectangle pasted over a
- * hazy, warm-lit room, which is exactly what "it feels like an overlay" means.
- *
- * The fog amount is computed from the scene's own FOG.density and the camera's
- * distance to the board, so it tracks whenever either changes.
+ * It is gone because the premise is. Inside the hall the board is now painted
+ * into a texture on a mesh (`board-raster.ts`), so it gets the real fog, the
+ * real bloom and the real vignette. This file only dresses the flat board on a
+ * web page, where none of that applies.
  */
-.board--in-scene {
-  position: relative;
-  /*
-   * There was a `filter: saturate() contrast()` here. It is gone on purpose.
-   *
-   * A CSS filter forces the browser to rasterise the entire element into a
-   * buffer and run a shader pass over it. On a 1500x730 element holding
-   * thousands of nodes, inside a wrapper that drei re-transforms every frame,
-   * that pass ran 60 times a second and was a large part of why the page sat at
-   * 10fps with unclickable buttons. The tint below achieves nearly the same
-   * thing as a plain composited overlay, which costs nothing.
-   */
-}
-
-/* Atmosphere between the camera and the board. */
-.board--in-scene::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 10px;
-  pointer-events: none;
-  z-index: 30;
-  background: var(--board-fog-color, #141a24);
-  opacity: var(--board-fog, 0);
-}
-
-/*
- * Falloff toward the edges, standing in for the vignette and depth of field
- * the post chain applies to everything except this element.
- */
-.board--in-scene::before {
-  content: "";
-  position: absolute;
-  inset: -2%;
-  border-radius: 14px;
-  pointer-events: none;
-  z-index: 29;
-  background: radial-gradient(
-    ellipse 78% 74% at 50% 42%,
-    rgba(0, 0, 0, 0) 55%,
-    rgba(6, 8, 12, 0.42) 100%
-  );
-}
 
 /* The recess the flap rows sit in, darker than the frame around it. */
 .board__well {

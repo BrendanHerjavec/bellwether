@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Html, OrbitControls } from "@react-three/drei";
+import { OrbitControls, PerformanceMonitor } from "@react-three/drei";
+import { useThree } from "@react-three/fiber";
 import {
   Bloom,
   DepthOfField,
@@ -11,59 +12,51 @@ import {
   Vignette,
 } from "@react-three/postprocessing";
 import * as THREE from "three";
-import { TotBoardView } from "@/components/board/TotBoard";
 import type { TradeRecord } from "@/components/trading/TradingProvider";
 import type { Market } from "@/lib/markets";
 import {
   BoardHousing,
   CameraDrift,
+  Fittings,
   Lights,
   Podium,
   Room,
-  ScreenHalo,
   ScreenLight,
   TickerHousing,
 } from "./HallScene";
 import { Avatars, type AvatarInfo } from "./Avatars";
+import { BoardScreen } from "./BoardScreen";
 import { WalkControls } from "./WalkControls";
-import {
-  BOARD,
-  CAMERA,
-  EXPOSURE,
-  FOG,
-  POST,
-  QUALITY,
-  boardFogBlend,
-  boardHtmlScale,
-  type QualityTier,
-} from "@/lib/hall";
+import { CAMERA, EXPOSURE, FOG, POST, QUALITY, type QualityTier } from "@/lib/hall";
+import { AIR } from "@/lib/palette";
 
 /**
  * The exchange hall.
  *
- * One thing to understand before changing anything here: the board is NOT part
- * of the WebGL render. drei's <Html transform> puts it in a DOM layer that is
- * positioned by the scene's camera matrix but composited outside the canvas.
+ * The board is part of the WebGL render. That sentence used to say the
+ * opposite, and reversing it is the single largest change this scene has had.
  *
- * That is a deliberate trade, and it is the reason the brief specifies
- * CSS3DRenderer at all — the digits stay real text at projector resolution
- * instead of becoming a blurry texture. The cost is that the post-processing
- * below cannot touch the board: no bloom on the glyphs, no depth of field, and
- * no WebGL geometry can occlude it.
+ * It was a drei `<Html transform>`: real DOM, positioned by the camera matrix
+ * but composited outside the canvas. That kept the glyphs as text, and it cost
+ * the two things that actually mattered — the frame rate, because drei rewrote
+ * a 3,700-node subtree's CSS matrix every frame on the main thread, and any
+ * sense of the board belonging to the room, because a layer outside the canvas
+ * receives no fog, no bloom, no depth of field, and cannot be occluded by
+ * anything in front of it.
  *
- * Three things compensate, because "it looks like an overlay" is the direct
- * consequence of that trade:
+ * Now it is a canvas texture on a mesh (`BoardScreen`), and everything below
+ * applies to it like it applies to the walls. `board-raster.ts` explains how
+ * the crispness survives that; the short version is supersampling and only
+ * uploading the texture when a drum is actually mid-flip.
  *
- *   1. ScreenLight puts real lights where the board is, so the room is lit BY
- *      the screen — reveals, seat backs and the nearest heads all catch it.
- *   2. ScreenHalo is an emissive plane just behind the board that the bloom
- *      pass blooms, bleeding glow past the DOM edges and hiding the seam.
- *   3. The board carries a CSS grade computed from the scene's own fog, so it
- *      sits in the same atmosphere as everything around it.
- *
- * If you ever want the board blurred by the DoF pass, the only way is to render
- * it to a texture, and that gives up the crispness the whole approach exists to
- * protect. Do not do it.
+ * The room is still lit BY the screen (`ScreenLight`), which was a compensation
+ * for the old arrangement and turned out to be worth keeping on its own merits.
+ * Its sibling `ScreenHalo` was not: an emissive plane slightly LARGER than the
+ * board and a centimetre nearer the camera is harmless while the board is
+ * composited on top of the canvas, and covers it completely the moment the
+ * board joins the depth buffer. It blanked the screen, and it is gone. See the
+ * depth-order assertions in `lib/hall.test.ts` before adding anything else to
+ * the opening.
  */
 export type CameraMode = "locked" | "drift" | "walk" | "orbit";
 
@@ -72,26 +65,28 @@ export function Hall({
   cameraMode = "locked",
   people,
   showLabels = true,
+  hideIds,
   markets,
   trades,
   onFps,
 }: {
   quality?: QualityTier;
   /**
-   * Defaults to "locked", and that is a performance decision, not a taste one.
+   * Defaults to "locked" for framing, no longer for frame rate.
    *
-   * A moving camera changes the CSS matrix drei writes onto the board's wrapper
-   * every frame, which re-rasterises thousands of DOM nodes on the main thread.
-   * A still camera writes the same string each frame and the browser skips the
-   * work entirely. Drift is lovely and it is not free.
+   * It used to be a performance decision: a moving camera rewrote the board's
+   * CSS matrix and re-rasterised thousands of DOM nodes every frame, so a still
+   * camera was several times cheaper than a moving one. The board is geometry
+   * now and moving the camera costs what moving a camera costs.
    */
   cameraMode?: CameraMode;
   people: Record<string, AvatarInfo>;
   showLabels?: boolean;
+  /** Traders to leave out of the crowd. See `Avatars`. */
+  hideIds?: readonly string[];
   /*
-   * Passed as plain props, not read from context. React context does not
-   * survive the crossing into R3F's reconciler and out again through drei's
-   * <Html> portal.
+   * Passed as plain props rather than read from context: R3F runs its own
+   * reconciler, and context does not survive the crossing into it.
    */
   markets: Market[];
   trades: TradeRecord[];
@@ -116,11 +111,60 @@ export function Hall({
         far: CAMERA.far,
       }}
     >
-      <color attach="background" args={["#0a0e15"]} />
-      {/* Exponential haze, so the walls dissolve instead of ending at a seam. */}
-      <fogExp2 attach="fog" args={[FOG.color, FOG.density]} />
-
       {onFps && <FpsProbe onFps={onFps} />}
+      <AdaptiveResolution range={quality.dpr} />
+      <HallContents
+        tier={tier}
+        cameraMode={cameraMode}
+        people={people}
+        showLabels={showLabels}
+        hideIds={hideIds}
+        markets={markets}
+        trades={trades}
+      />
+    </Canvas>
+  );
+}
+
+/**
+ * Everything inside the Canvas, as its own component.
+ *
+ * Split out so it can be mounted against a manually-driven R3F root as well as
+ * the real one — see `/lab/still`. That is not a nicety: R3F sizes itself with
+ * a ResizeObserver and drives itself with requestAnimationFrame, and in a
+ * headless pane neither ever fires, so the scene cannot be looked at at all
+ * from the environment it is written in. Mounting the same tree against an
+ * explicitly-sized root with `frameloop: "never"` is the only way to get a
+ * frame out of it, and it works precisely because this component knows nothing
+ * about how it is being driven.
+ */
+export function HallContents({
+  tier = "balanced",
+  cameraMode = "locked",
+  people,
+  showLabels = true,
+  hideIds,
+  markets,
+  trades,
+}: {
+  tier?: QualityTier;
+  cameraMode?: CameraMode;
+  people: Record<string, AvatarInfo>;
+  showLabels?: boolean;
+  hideIds?: readonly string[];
+  markets: Market[];
+  trades: TradeRecord[];
+}) {
+  const quality = QUALITY[tier];
+
+  return (
+    <>
+      <color attach="background" args={[AIR.background]} />
+      {/* Exponential haze, so the walls dissolve instead of ending at a seam.
+          Warm, and that is the single highest-leverage colour in the room —
+          fog tints everything by distance, so it decides what the depth of the
+          place is made of before any material gets a say. */}
+      <fogExp2 attach="fog" args={[FOG.color, FOG.density]} />
 
       {cameraMode === "orbit" && (
         <OrbitControls
@@ -141,46 +185,14 @@ export function Hall({
 
       <Lights />
       <ScreenLight />
-      <Room quality={quality} />
-      <ScreenHalo />
+      <Room />
+      <Fittings />
       <TickerHousing />
       <Podium />
-      <Avatars people={people} showLabels={showLabels} />
+      <Avatars people={people} showLabels={showLabels} hideIds={hideIds} />
 
       <BoardHousing>
-        <Html
-          transform
-          /*
-           * Scaled so the board occupies the same world size whatever pixel
-           * width the quality tier renders it at. A smaller pixel width means
-           * fewer drums and fewer DOM nodes in the subtree drei re-transforms
-           * every frame, which is the dominant cost in this scene — and the
-           * board only displays around 630 CSS pixels wide anyway.
-           */
-          scale={boardHtmlScale * (BOARD.pixelWidth / quality.boardPixelWidth)}
-          position={[0, 0, 0.02]}
-          // Without this the board is captured into the canvas's own stacking
-          // context and disappears behind the effect composer's output.
-          zIndexRange={[10, 0]}
-          /*
-           * As a PROP, not in `style`. drei sizes the Html root element to the
-           * whole canvas and takes its pointer-events from this prop; `style`
-           * only reaches the inner content div. Setting it there left an
-           * invisible full-canvas div swallowing every pointer event, which
-           * silently disabled drag-to-look and orbit.
-           */
-          pointerEvents="none"
-          style={{ width: `${quality.boardPixelWidth}px` }}
-        >
-          <TotBoardView
-            markets={markets}
-            trades={trades}
-            widthPx={quality.boardPixelWidth}
-            // Puts the board in the same atmosphere as the room around it.
-            fogBlend={boardFogBlend()}
-            fogColor={FOG.color}
-          />
-        </Html>
+        <BoardScreen markets={markets} trades={trades} />
       </BoardHousing>
 
       <EffectComposer enabled={quality.bloom || quality.depthOfField}>
@@ -207,8 +219,35 @@ export function Hall({
           {quality.noise && <Noise opacity={POST.noise.opacity} />}
         </>
       </EffectComposer>
-    </Canvas>
+    </>
   );
+}
+
+/**
+ * Render resolution, found rather than assumed.
+ *
+ * The tiers below pick what to draw; this picks how many pixels to draw it
+ * into, and it is the one knob that can respond to the machine it is actually
+ * running on. Shading cost is quadratic in resolution, so sliding from 1.5 to 1
+ * is a 2.2x cut — far more than any single effect here is worth — and it does
+ * it in steps small enough that nobody watches it happen.
+ *
+ * Each tier's `dpr` pair is the range it is allowed to move within, so this can
+ * never make a tier more expensive than the tier says it may be. Which is why
+ * the manual tier buttons still mean something: they set the ceiling.
+ */
+function AdaptiveResolution({ range }: { range: readonly [number, number] }) {
+  const setDpr = useThree((state) => state.setDpr);
+  const [min, max] = range;
+
+  const onChange = useCallback(
+    ({ factor }: { factor: number }) => setDpr(min + (max - min) * factor),
+    [setDpr, min, max],
+  );
+
+  // `flipflops` caps how many times it may change its mind before settling, so
+  // a machine sitting right on the boundary does not oscillate for ever.
+  return <PerformanceMonitor factor={1} flipflops={3} onChange={onChange} />;
 }
 
 /**

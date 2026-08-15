@@ -35,11 +35,21 @@ const Hall = dynamic(() => import("@/components/hall/Hall").then((m) => m.Hall),
 });
 
 const CAMERA_MODES: { id: CameraMode; label: string; hint: string }[] = [
-  { id: "locked", label: "Locked", hint: "Still camera. By far the fastest — a moving camera forces the board's DOM to re-rasterise every frame." },
-  { id: "walk", label: "Walk", hint: "Drag to look, WASD to move, shift to hurry. The cursor stays yours." },
+  { id: "locked", label: "Locked", hint: "Still camera, framed on the board. The shot this room was designed for." },
+  { id: "walk", label: "Walk", hint: "Drag to look, WASD to move, shift to hurry. The cursor stays yours, and your seat is empty." },
   { id: "orbit", label: "Orbit", hint: "Drag to orbit, scroll to zoom, right-drag to pan." },
-  { id: "drift", label: "Drift", hint: "Slow idle float. Looks best, costs the most." },
+  { id: "drift", label: "Drift", hint: "Slow idle float, so the frame is never perfectly still." },
 ];
+
+/**
+ * You cannot be walking the hall and sitting in it.
+ *
+ * In every other mode the camera is a viewpoint and the figure labelled "You"
+ * is where you are sitting. In walk mode the camera IS you, so leaving the
+ * figure in puts a second you in the room — one you can walk up to and read the
+ * name tag of, which is a stranger sight than an empty seat.
+ */
+const WALKING_HIDES = [YOU_ID] as const;
 
 export default function BoardPage() {
   return (
@@ -95,6 +105,7 @@ function BoardView() {
             cameraMode={cameraMode}
             people={people}
             showLabels={showLabels}
+            hideIds={cameraMode === "walk" ? WALKING_HIDES : undefined}
             markets={markets}
             trades={trades}
             onFps={setFps}

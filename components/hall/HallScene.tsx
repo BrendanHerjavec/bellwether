@@ -1,29 +1,40 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { MeshReflectorMaterial } from "@react-three/drei";
 import * as THREE from "three";
 import {
   ANCHORS,
-  BOARD,
+  BAR,
+  BEZEL,
   BOARD_FRAME,
-  SCREEN_HALO,
-  SCREEN_LIGHT,
+  BOOTHS,
   CAMERA,
   CAMERA_DRIFT,
   COLUMNS,
   FLOOR,
   HALL,
   LIGHTS,
+  NEON,
+  PENDANTS,
   PODIUM,
-  QUALITY,
-  SEATING,
-  STATION,
+  ROOM,
+  SCREEN_LIGHT,
+  TABLE,
+  TABLES,
   TICKER_HOUSING,
-  type QualityTier,
+  WALL_SCREENS,
 } from "@/lib/hall";
-import { concreteTexture, repeatFor, subwayTileTexture } from "./textures";
+import { GLOW, SURFACE } from "@/lib/palette";
+import {
+  bottleShelfTexture,
+  carpetTexture,
+  neonSignTexture,
+  pressedTinTexture,
+  repeatFor,
+  wallScreenTexture,
+  woodPanelTexture,
+} from "./textures";
 
 /* ------------------------------------------------------------------ camera */
 
@@ -54,159 +65,172 @@ export function CameraDrift() {
   return null;
 }
 
+/* --------------------------------------------------------------- materials */
+
+/**
+ * Every material in the room, built once for the life of the page.
+ *
+ * Mesh count is cheap; material count is not. Each distinct material is a
+ * shader program that has to be compiled, bound and fed the scene's whole
+ * light list. A dozen materials across a hundred and fifty meshes costs a
+ * fraction of a hundred and fifty materials, and the difference is invisible.
+ *
+ * Deliberately a module singleton rather than a hook. Six components in this
+ * file need these, and a `useMemo` in each would have built six independent
+ * sets — six copies of every generated texture, six of every shader — which is
+ * the exact opposite of the point. A context would also work, but materials
+ * are genuinely process-wide resources here and there is nothing to
+ * parameterise them by.
+ *
+ * Nothing disposes them, and that is correct: they outlive every component
+ * that uses them and are released when the page goes. A hot reload leaks one
+ * set, which is a development cost, not a running one.
+ */
+let cached: HallMaterials | null = null;
+
+function hallMaterials(): HallMaterials {
+  if (cached) return cached;
+
+  const panelMap = woodPanelTexture();
+  const carpetMap = carpetTexture();
+  const tinMap = pressedTinTexture();
+
+  const solid = (color: string, roughness: number, metalness = 0.05) =>
+    new THREE.MeshStandardMaterial({ color, roughness, metalness });
+
+  cached = {
+    /** Cloned per surface, so each can carry its own repeat. */
+    panelMap,
+    carpetMap,
+    tinMap,
+    /** Paint above the picture rail. Deep, and matte enough to stay quiet. */
+    paint: solid(SURFACE.oxbloodDeep, 0.94, 0.02),
+    walnut: solid(SURFACE.walnut, 0.72, 0.04),
+    walnutDeep: solid(SURFACE.walnutDeep, 0.78, 0.04),
+    walnutDark: solid(SURFACE.walnutDark, 0.82, 0.04),
+    /** Brass: rails, banding, table bases, screen bezels. */
+    brass: new THREE.MeshStandardMaterial({
+      color: SURFACE.brass,
+      roughness: 0.32,
+      metalness: 0.92,
+    }),
+    brassDeep: new THREE.MeshStandardMaterial({
+      color: SURFACE.brassDeep,
+      roughness: 0.44,
+      metalness: 0.85,
+    }),
+    leather: solid(SURFACE.leather, 0.66, 0.06),
+    felt: solid(SURFACE.felt, 0.9, 0.02),
+    /** Lamp globes. Unlit, so the bloom pass can find them. */
+    lamp: new THREE.MeshBasicMaterial({ color: GLOW.tungsten, toneMapped: false }),
+  };
+  return cached;
+}
+
+interface HallMaterials {
+  panelMap: THREE.Texture;
+  carpetMap: THREE.Texture;
+  tinMap: THREE.Texture;
+  paint: THREE.MeshStandardMaterial;
+  walnut: THREE.MeshStandardMaterial;
+  walnutDeep: THREE.MeshStandardMaterial;
+  walnutDark: THREE.MeshStandardMaterial;
+  brass: THREE.MeshStandardMaterial;
+  brassDeep: THREE.MeshStandardMaterial;
+  leather: THREE.MeshStandardMaterial;
+  felt: THREE.MeshStandardMaterial;
+  lamp: THREE.MeshBasicMaterial;
+}
+
+/** Clone the shared map so this surface can carry its own repeat. */
+function tiled(map: THREE.Texture, widthMetres: number, heightMetres: number) {
+  return repeatFor(map.clone(), widthMetres, heightMetres);
+}
+
 /* ------------------------------------------------------------------- room */
 
 /**
- * The platform.
+ * The shell.
  *
- * Tiled to head height with plain render above, exactly as most stations are
- * built. The tile is doing enormous work here — it is the difference between a
- * dark room with a screen in it and somewhere you recognise.
+ * Carpet, walnut panelling to a brass picture rail, dark paint above, a
+ * pressed tin ceiling. It used to be a station platform — glazed tile, poured
+ * concrete, a painted safety line — and the change is not a reskin so much as
+ * a different building. A tiled wall with a bar in front of it reads as a
+ * station that happens to have a bar in it.
  */
-export function Room({ quality }: { quality: (typeof QUALITY)[QualityTier] }) {
+export function Room() {
   const { width, height, depth, backWallZ } = HALL;
   const midZ = backWallZ + depth / 2;
-  const tileH = STATION.tileHeight;
-  const upperH = height - tileH;
+  const panelH = ROOM.panelHeight;
+  const upperH = height - panelH;
+  const m = hallMaterials();
 
-  // Generated once. Cloned per surface so each can carry its own repeat.
-  const tile = useMemo(() => subwayTileTexture(4), []);
-  const concrete = useMemo(() => concreteTexture(8), []);
-
-  const backTile = useMemo(() => repeatFor(tile.clone(), width, tileH), [tile, width, tileH]);
-  const sideTile = useMemo(() => repeatFor(tile.clone(), depth, tileH), [tile, depth, tileH]);
-  const ceilingMap = useMemo(
-    () => repeatFor(concrete.clone(), width, depth),
-    [concrete, width, depth],
+  // Each surface gets its own clone, because the repeat lives on the texture
+  // and a shared one would mean the floor and the walls fighting over it.
+  const maps = useMemo(
+    () => ({
+      carpet: tiled(m.carpetMap, width, depth),
+      ceiling: tiled(m.tinMap, width, depth),
+      backPanel: tiled(m.panelMap, width, panelH),
+      sidePanel: tiled(m.panelMap, depth, panelH),
+    }),
+    [m, width, depth, panelH],
   );
 
-  const renderMaterial = (
-    <meshStandardMaterial color="#3b4048" roughness={0.95} metalness={0.02} />
-  );
+  useEffect(() => () => Object.values(maps).forEach((map) => map.dispose()), [maps]);
 
   return (
     <group>
-      {/* Floor. The reflection is what sells the whole hall, so it gets the
-          only expensive material in the scene. */}
+      {/* The floor. Carpet, and the reason the scene got faster and prettier
+          in the same change — see FLOOR. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, midZ]} receiveShadow>
         <planeGeometry args={[width, depth]} />
-        {quality.reflections ? (
-          <MeshReflectorMaterial
-            blur={[...quality.reflectionBlur]}
-            resolution={quality.reflectionResolution}
-            mixBlur={FLOOR.mixBlur}
-            mixStrength={FLOOR.mixStrength}
-            roughness={FLOOR.roughness}
-            depthScale={FLOOR.depthScale}
-            minDepthThreshold={FLOOR.minDepthThreshold}
-            maxDepthThreshold={FLOOR.maxDepthThreshold}
-            color={FLOOR.color}
-            metalness={FLOOR.metalness}
-          />
-        ) : (
-          // Performance tier: a plain polished floor. It loses the reflection,
-          // which is the best thing in the scene, but it also removes an entire
-          // extra render of everything, every frame.
-          <meshStandardMaterial
-            color={FLOOR.color}
-            roughness={0.35}
-            metalness={0.55}
-          />
-        )}
-      </mesh>
-
-      {/* The painted safety line. One stripe, and the floor becomes a platform. */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.012, STATION.safetyLine.z]}
-      >
-        <planeGeometry args={[width, STATION.safetyLine.width]} />
         <meshStandardMaterial
-          color={STATION.safetyLine.color}
-          roughness={0.75}
-          emissive={STATION.safetyLine.color}
-          emissiveIntensity={0.12}
+          map={maps.carpet}
+          roughness={FLOOR.roughness}
+          metalness={FLOOR.metalness}
         />
       </mesh>
 
-      {/*
-        Back wall, built as four panels around a real opening.
-        A single flat plane with the board hovering in front of it is what made
-        the screen look composited in from another scene.
-      */}
-      <BackWall tileMap={backTile} />
-      {/* Tiled dado continues across the wall below the opening. */}
-      <mesh position={[0, tileH / 2, backWallZ - 0.001]} receiveShadow>
-        <planeGeometry args={[width, tileH]} />
-        <meshStandardMaterial map={backTile} roughness={0.42} metalness={0.04} />
-      </mesh>
+      <BackWall materials={m} panelMap={maps.backPanel} />
 
-      {/* Side walls, turned inward. */}
+      {/* Side walls, turned inward: panelling, rail, paint. */}
       {[-1, 1].map((side) => (
         <group key={side}>
           <mesh
-            position={[(side * width) / 2, tileH / 2, midZ]}
+            position={[(side * width) / 2, panelH / 2, midZ]}
             rotation={[0, (-side * Math.PI) / 2, 0]}
             receiveShadow
           >
-            <planeGeometry args={[depth, tileH]} />
-            <meshStandardMaterial map={sideTile} roughness={0.42} metalness={0.04} />
+            <planeGeometry args={[depth, panelH]} />
+            <meshStandardMaterial map={maps.sidePanel} roughness={0.72} metalness={0.05} />
+          </mesh>
+          {/* The picture rail. One bright line at eye level, running the length
+              of the room — it does more for the sense of a finished interior
+              than anything else here, and it is a single box. */}
+          <mesh
+            position={[side * (width / 2 - ROOM.rail.depth / 2), panelH, midZ]}
+            material={m.brass}
+          >
+            <boxGeometry args={[ROOM.rail.depth, ROOM.rail.height, depth]} />
           </mesh>
           <mesh
-            position={[(side * width) / 2, tileH + upperH / 2, midZ]}
+            position={[(side * width) / 2, panelH + upperH / 2, midZ]}
             rotation={[0, (-side * Math.PI) / 2, 0]}
+            material={m.paint}
           >
             <planeGeometry args={[depth, upperH]} />
-            {renderMaterial}
           </mesh>
         </group>
       ))}
 
-      {/* Ceiling. */}
       <mesh position={[0, height, midZ]} rotation={[Math.PI / 2, 0, 0]}>
         <planeGeometry args={[width, depth]} />
-        <meshStandardMaterial map={ceilingMap} color="#1b1e25" roughness={0.98} />
+        <meshStandardMaterial map={maps.ceiling} roughness={0.7} metalness={0.35} />
       </mesh>
 
-      <Beams />
-      <Columns />
-      <Benches />
-      <SeatingRows />
-    </group>
-  );
-}
-
-/**
- * Rows of seating facing the screen.
- *
- * Continuous benches rather than individual chairs — invisible at this
- * distance, and three meshes a row instead of fifty. Their real job is to
- * explain why everybody is sitting down, which is what keeps every head below
- * the camera's eye line and the screen clear of faces.
- */
-function SeatingRows() {
-  return (
-    <group>
-      {SEATING.rows.map((z) => (
-        <group key={z} position={[0, 0, z]}>
-          <mesh position={[0, SEATING.seatHeight, 0]} castShadow receiveShadow>
-            <boxGeometry args={[SEATING.width, 0.11, SEATING.depth]} />
-            <meshStandardMaterial color="#2b2f37" roughness={0.62} metalness={0.3} />
-          </mesh>
-          <mesh
-            position={[0, SEATING.seatHeight + SEATING.backHeight / 2, -SEATING.depth / 2]}
-            rotation={[0.16, 0, 0]}
-            castShadow
-          >
-            <boxGeometry args={[SEATING.width, SEATING.backHeight, 0.09]} />
-            <meshStandardMaterial color="#2b2f37" roughness={0.62} metalness={0.3} />
-          </mesh>
-          <mesh position={[0, SEATING.seatHeight / 2, 0]}>
-            <boxGeometry args={[SEATING.width, SEATING.seatHeight, 0.12]} />
-            <meshStandardMaterial color="#1b1f26" roughness={0.8} metalness={0.2} />
-          </mesh>
-        </group>
-      ))}
+      <Beams materials={m} />
+      <Columns materials={m} />
     </group>
   );
 }
@@ -219,7 +243,13 @@ function SeatingRows() {
  * the opposite edge into shadow, which is what tells the eye the screen is
  * recessed into the building rather than hanging on it.
  */
-function BackWall({ tileMap }: { tileMap: THREE.Texture }) {
+function BackWall({
+  materials: m,
+  panelMap,
+}: {
+  materials: HallMaterials;
+  panelMap: THREE.Texture;
+}) {
   const { width, height, backWallZ } = HALL;
   const openW = BOARD_FRAME.width;
   const openH = BOARD_FRAME.height;
@@ -227,37 +257,31 @@ function BackWall({ tileMap }: { tileMap: THREE.Texture }) {
   const openTop = ay + openH / 2;
   const openBottom = ay - openH / 2;
   const reveal = BOARD_FRAME.reveal;
-
-  const wall = (
-    <meshStandardMaterial color="#3b4048" roughness={0.95} metalness={0.02} />
-  );
-  const revealMat = (
-    <meshStandardMaterial color="#2a2e35" roughness={0.7} metalness={0.15} />
-  );
-
   const sideW = (width - openW) / 2;
 
   return (
     <group>
-      {/* Above the opening. */}
-      <mesh position={[0, openTop + (height - openTop) / 2, backWallZ]} receiveShadow>
+      <mesh
+        position={[0, openTop + (height - openTop) / 2, backWallZ]}
+        material={m.paint}
+        receiveShadow
+      >
         <planeGeometry args={[width, height - openTop]} />
-        {wall}
       </mesh>
-      {/* Below the opening. */}
+      {/* Below the opening is the only part of this wall low enough to be
+          panelled, and it is the strip the sill sits against. */}
       <mesh position={[0, openBottom / 2, backWallZ]} receiveShadow>
         <planeGeometry args={[width, openBottom]} />
-        {wall}
+        <meshStandardMaterial map={panelMap} roughness={0.72} metalness={0.05} />
       </mesh>
-      {/* Either side of the opening. */}
       {[-1, 1].map((side) => (
         <mesh
           key={side}
           position={[(side * (openW + sideW)) / 2, ay, backWallZ]}
+          material={m.paint}
           receiveShadow
         >
           <planeGeometry args={[sideW, openH]} />
-          {wall}
         </mesh>
       ))}
 
@@ -267,45 +291,44 @@ function BackWall({ tileMap }: { tileMap: THREE.Texture }) {
           key={`v${side}`}
           position={[(side * openW) / 2, ay, backWallZ + reveal / 2]}
           rotation={[0, (-side * Math.PI) / 2, 0]}
+          material={m.walnutDeep}
           receiveShadow
         >
           <planeGeometry args={[reveal, openH]} />
-          {revealMat}
         </mesh>
       ))}
       <mesh
         position={[0, openTop, backWallZ + reveal / 2]}
         rotation={[Math.PI / 2, 0, 0]}
+        material={m.walnutDeep}
         receiveShadow
       >
         <planeGeometry args={[openW, reveal]} />
-        {revealMat}
       </mesh>
       <mesh
         position={[0, openBottom, backWallZ + reveal / 2]}
         rotation={[-Math.PI / 2, 0, 0]}
+        material={m.walnutDeep}
         receiveShadow
       >
         <planeGeometry args={[openW, reveal]} />
-        {revealMat}
       </mesh>
 
       {/* The recess's own back face, behind the screen. */}
-      <mesh position={[0, ay, backWallZ]}>
+      <mesh position={[0, ay, backWallZ]} material={m.walnutDark}>
         <planeGeometry args={[openW, openH]} />
-        <meshStandardMaterial map={tileMap} color="#0a0c10" roughness={0.9} />
       </mesh>
     </group>
   );
 }
 
-/** Exposed structural beams across the ceiling, receding down the platform. */
-function Beams() {
+/** Exposed beams across the ceiling, in stained timber rather than steel. */
+function Beams({ materials: m }: { materials: HallMaterials }) {
   const positions = useMemo(
     () =>
       Array.from(
-        { length: STATION.beams.count },
-        (_, i) => STATION.beams.startZ + i * STATION.beams.spacing,
+        { length: ROOM.beams.count },
+        (_, i) => ROOM.beams.startZ + i * ROOM.beams.spacing,
       ),
     [],
   );
@@ -313,37 +336,48 @@ function Beams() {
   return (
     <group>
       {positions.map((z, index) => (
-        <mesh key={index} position={[0, HALL.height - STATION.beams.drop / 2, z]}>
-          <boxGeometry args={[HALL.width, STATION.beams.drop, STATION.beams.depth]} />
-          <meshStandardMaterial color="#232730" roughness={0.82} metalness={0.25} />
+        <mesh
+          key={index}
+          position={[0, HALL.height - ROOM.beams.drop / 2, z]}
+          material={m.walnutDark}
+        >
+          <boxGeometry args={[HALL.width, ROOM.beams.drop, ROOM.beams.depth]} />
         </mesh>
       ))}
     </group>
   );
 }
 
-/** Platform benches. Nobody sits on them; they say "you wait here". */
-function Benches() {
+/**
+ * Columns down both sides, now panelled with brass banding.
+ *
+ * The single biggest depth cue in the scene: repetition receding into haze is
+ * what makes a space read as long. Without them the side walls are two flat
+ * planes and the room has no length at all.
+ */
+function Columns({ materials: m }: { materials: HallMaterials }) {
+  const positions = useMemo(() => {
+    const out: [number, number, number][] = [];
+    for (let i = 0; i < COLUMNS.count; i += 1) {
+      const z = COLUMNS.startZ + i * COLUMNS.spacing;
+      out.push([-HALL.width / 2 + COLUMNS.inset, 0, z]);
+      out.push([HALL.width / 2 - COLUMNS.inset, 0, z]);
+    }
+    return out;
+  }, []);
+
   return (
     <group>
-      {STATION.benches.map((bench, index) => (
-        <group
-          key={index}
-          position={[bench.position[0], 0, bench.position[2]]}
-          rotation={[0, bench.rotation, 0]}
-        >
-          <mesh position={[0, 0.46, 0]} castShadow>
-            <boxGeometry args={[3.2, 0.12, 0.62]} />
-            <meshStandardMaterial color="#2d3138" roughness={0.6} metalness={0.35} />
+      {positions.map((position, index) => (
+        <group key={index} position={position}>
+          <mesh position={[0, HALL.height / 2, 0]} material={m.walnutDeep}>
+            <boxGeometry args={[COLUMNS.size, HALL.height, COLUMNS.size]} />
           </mesh>
-          <mesh position={[0, 0.78, -0.26]} rotation={[0.22, 0, 0]}>
-            <boxGeometry args={[3.2, 0.5, 0.09]} />
-            <meshStandardMaterial color="#2d3138" roughness={0.6} metalness={0.35} />
-          </mesh>
-          {[-1.35, 1.35].map((x) => (
-            <mesh key={x} position={[x, 0.23, 0]}>
-              <boxGeometry args={[0.12, 0.46, 0.5]} />
-              <meshStandardMaterial color="#1c2027" roughness={0.7} metalness={0.4} />
+          {/* Two bands of brass. They catch the coves and give each column a
+              highlight, which is what stops a row of them reading as posts. */}
+          {[ROOM.panelHeight, 0.34].map((y) => (
+            <mesh key={y} position={[0, y, 0]} material={m.brass}>
+              <boxGeometry args={[COLUMNS.size + 0.05, 0.09, COLUMNS.size + 0.05]} />
             </mesh>
           ))}
         </group>
@@ -352,32 +386,289 @@ function Benches() {
   );
 }
 
+/* --------------------------------------------------------------- fittings */
+
 /**
- * Structural columns down both sides.
+ * Everything that makes it a bar rather than a hall.
  *
- * Repetition receding into haze is what makes a space read as long. Without
- * them the side walls are two flat planes and the hall has no depth cue at all.
+ * Almost all of it is emissive geometry and boxes. The room reads as "lit by
+ * many small warm sources" from the *sight* of them; only a handful are real
+ * lights, because every real light is paid for by every material in the scene,
+ * per fragment, on every frame.
  */
-function Columns() {
-  const positions = useMemo(() => {
-    const out: [number, number, number][] = [];
-    for (let i = 0; i < COLUMNS.count; i += 1) {
-      const z = COLUMNS.startZ + i * COLUMNS.spacing;
-      out.push([-HALL.width / 2 + COLUMNS.inset, HALL.height / 2, z]);
-      out.push([HALL.width / 2 - COLUMNS.inset, HALL.height / 2, z]);
-    }
+export function Fittings() {
+  const m = hallMaterials();
+  return (
+    <group>
+      <Bar materials={m} />
+      <Booths materials={m} />
+      <HighTables materials={m} />
+      <WallScreens materials={m} />
+      <NeonSign />
+    </group>
+  );
+}
+
+/**
+ * The bar: counter, foot rail, stools and a backlit shelf of bottles.
+ *
+ * The shelf is doing most of the work. It is the only lit thing in the room at
+ * standing height and the only place with real colour saturation in it, which
+ * makes it the thing the eye goes to after the board — exactly as it would in
+ * the real room.
+ */
+function Bar({ materials: m }: { materials: HallMaterials }) {
+  const length = BAR.to - BAR.from;
+  const midZ = (BAR.from + BAR.to) / 2;
+
+  const bottles = useMemo(() => bottleShelfTexture(), []);
+  useEffect(() => () => bottles.dispose(), [bottles]);
+
+  const stools = useMemo(() => {
+    const out: number[] = [];
+    for (let z = BAR.stools.from; z <= BAR.stools.to; z += BAR.stools.spacing) out.push(z);
     return out;
   }, []);
 
   return (
     <group>
-      {positions.map((position, index) => (
-        <mesh key={index} position={position}>
-          <boxGeometry args={[COLUMNS.size, HALL.height, COLUMNS.size]} />
-          <meshStandardMaterial color="#181b23" roughness={0.9} metalness={0.12} />
-        </mesh>
+      {/* Counter body and a darker top. */}
+      <mesh
+        position={[BAR.x, BAR.counterHeight / 2, midZ]}
+        material={m.walnut}
+        castShadow
+        receiveShadow
+      >
+        <boxGeometry args={[BAR.counterDepth, BAR.counterHeight, length]} />
+      </mesh>
+      <mesh position={[BAR.x, BAR.counterHeight + 0.03, midZ]} material={m.walnutDark}>
+        <boxGeometry args={[BAR.counterDepth + 0.16, 0.06, length + 0.16]} />
+      </mesh>
+
+      {/* The brass foot rail. Nothing else says "bar" as fast from across a
+          room, and it is one cylinder. */}
+      <mesh
+        position={[BAR.x + BAR.footRail.offset, BAR.footRail.y, midZ]}
+        rotation={[Math.PI / 2, 0, 0]}
+        material={m.brass}
+      >
+        <cylinderGeometry args={[BAR.footRail.radius, BAR.footRail.radius, length, 8]} />
+      </mesh>
+
+      {/* Back bar: a dark case against the wall, with the lit shelf inside it. */}
+      <mesh
+        position={[BAR.wallX + 0.18, (BAR.shelf.top + BAR.shelf.bottom) / 2, midZ]}
+        material={m.walnutDark}
+      >
+        <boxGeometry args={[0.36, BAR.shelf.top - BAR.shelf.bottom + 0.5, length]} />
+      </mesh>
+      <mesh
+        position={[BAR.wallX + 0.37, (BAR.shelf.top + BAR.shelf.bottom) / 2, midZ]}
+        rotation={[0, Math.PI / 2, 0]}
+      >
+        <planeGeometry args={[length, BAR.shelf.top - BAR.shelf.bottom]} />
+        <meshBasicMaterial map={bottles} toneMapped={false} />
+      </mesh>
+      {/* One real light for the whole bar, sitting in front of the bottles. */}
+      <pointLight
+        position={[BAR.wallX + 1.4, BAR.shelf.top - 0.4, midZ]}
+        color={GLOW.bottles}
+        intensity={45}
+        distance={18}
+      />
+
+      {stools.map((z) => (
+        <group key={z} position={[BAR.stools.x, 0, z]}>
+          <mesh position={[0, BAR.stools.seatHeight, 0]} material={m.leather} castShadow>
+            <cylinderGeometry args={[0.19, 0.19, 0.09, 12]} />
+          </mesh>
+          <mesh position={[0, BAR.stools.seatHeight / 2, 0]} material={m.brassDeep}>
+            <cylinderGeometry args={[0.045, 0.045, BAR.stools.seatHeight, 8]} />
+          </mesh>
+          <mesh position={[0, 0.03, 0]} material={m.brassDeep}>
+            <cylinderGeometry args={[0.21, 0.21, 0.05, 12]} />
+          </mesh>
+        </group>
       ))}
     </group>
+  );
+}
+
+/** Booths down the opposite wall, so the two runs converge on the board. */
+function Booths({ materials: m }: { materials: HallMaterials }) {
+  return (
+    <group>
+      {BOOTHS.z.map((z) => (
+        <group key={z} position={[0, 0, z]}>
+          {[-1, 1].map((side) => (
+            <group key={side} position={[0, 0, (side * BOOTHS.width) / 2]}>
+              <mesh
+                position={[BOOTHS.x, BOOTHS.seatHeight, 0]}
+                material={m.leather}
+                castShadow
+              >
+                <boxGeometry args={[2.2, 0.14, 0.62]} />
+              </mesh>
+              <mesh
+                position={[BOOTHS.x, BOOTHS.seatHeight / 2, 0]}
+                material={m.walnutDeep}
+              >
+                <boxGeometry args={[2.2, BOOTHS.seatHeight, 0.6]} />
+              </mesh>
+              {/* The high back. Booths are mostly back, seen from across a room. */}
+              <mesh
+                position={[
+                  BOOTHS.x,
+                  BOOTHS.seatHeight + BOOTHS.backHeight / 2,
+                  side * 0.32,
+                ]}
+                material={m.leather}
+                castShadow
+              >
+                <boxGeometry args={[2.2, BOOTHS.backHeight, 0.16]} />
+              </mesh>
+            </group>
+          ))}
+          <mesh position={[BOOTHS.x, BOOTHS.tableHeight, 0]} material={m.walnutDark}>
+            <boxGeometry args={[1.6, 0.07, 0.9]} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/**
+ * High tables, and the lamps over them.
+ *
+ * Kept out of the middle of the room. The tables could not block the board
+ * anyway — they sit below the camera's eye line, so they always project below
+ * it — but the pendants hang above eye level and can, which is why their
+ * placement is asserted in `lib/hall.test.ts` rather than eyeballed.
+ */
+function HighTables({ materials: m }: { materials: HallMaterials }) {
+  return (
+    <group>
+      {TABLES.map((table, index) => (
+        <group key={index} position={[table.position[0], 0, table.position[2]]}>
+          <mesh position={[0, TABLE.height, 0]} material={m.walnutDark} castShadow>
+            <cylinderGeometry args={[TABLE.topRadius, TABLE.topRadius, TABLE.topThickness, 16]} />
+          </mesh>
+          <mesh position={[0, TABLE.height / 2, 0]} material={m.brassDeep}>
+            <cylinderGeometry args={[TABLE.columnRadius, TABLE.columnRadius, TABLE.height, 8]} />
+          </mesh>
+          <mesh position={[0, 0.03, 0]} material={m.brassDeep}>
+            <cylinderGeometry args={[TABLE.baseRadius, TABLE.baseRadius, 0.06, 16]} />
+          </mesh>
+
+          {table.pendant && (
+            <group position={[0, PENDANTS.y, 0]}>
+              {/* Flex up to the ceiling, so the lamp is hung rather than floating. */}
+              <mesh
+                position={[0, (HALL.height - PENDANTS.y) / 2, 0]}
+                material={m.brassDeep}
+              >
+                <cylinderGeometry args={[0.012, 0.012, HALL.height - PENDANTS.y, 5]} />
+              </mesh>
+              <mesh material={m.brass}>
+                <coneGeometry
+                  args={[PENDANTS.shadeRadius, PENDANTS.shadeHeight, 14, 1, true]}
+                />
+              </mesh>
+              <mesh position={[0, -PENDANTS.shadeHeight / 2, 0]} material={m.lamp}>
+                <sphereGeometry args={[PENDANTS.globeRadius, 8, 6]} />
+              </mesh>
+              {index % PENDANTS.lightEvery === 0 && (
+                <pointLight
+                  position={[0, -0.25, 0]}
+                  color={LIGHTS.pendant.color}
+                  intensity={LIGHTS.pendant.intensity}
+                  distance={LIGHTS.pendant.distance}
+                />
+              )}
+            </group>
+          )}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/**
+ * Screens on the side walls.
+ *
+ * The cool counterpoint the palette depends on. Every surface in this room is
+ * amber, oxblood or brass; without something blue-white to be warm *against*,
+ * the whole thing is monochrome again in a nicer hue. These are also the only
+ * things in the room besides the board with information on them.
+ */
+function WallScreens({ materials: m }: { materials: HallMaterials }) {
+  const screens = useMemo(() => {
+    const out: { key: string; x: number; z: number; rotation: number; map: THREE.Texture }[] =
+      [];
+    let i = 0;
+    for (const side of [-1, 1]) {
+      for (const z of WALL_SCREENS.z) {
+        out.push({
+          key: `${side}:${z}`,
+          x: side * (HALL.width / 2 - WALL_SCREENS.inset),
+          z,
+          rotation: (-side * Math.PI) / 2,
+          map: wallScreenTexture(i + 1, WALL_SCREENS.labels[i % WALL_SCREENS.labels.length]),
+        });
+        i += 1;
+      }
+    }
+    return out;
+  }, []);
+
+  useEffect(() => () => screens.forEach((s) => s.map.dispose()), [screens]);
+
+  return (
+    <group>
+      {screens.map((screen) => (
+        <group
+          key={screen.key}
+          position={[screen.x, WALL_SCREENS.y, screen.z]}
+          rotation={[0, screen.rotation, 0]}
+        >
+          <mesh material={m.brassDeep}>
+            <boxGeometry
+              args={[
+                WALL_SCREENS.width + WALL_SCREENS.bezel,
+                WALL_SCREENS.height + WALL_SCREENS.bezel,
+                0.07,
+              ]}
+            />
+          </mesh>
+          <mesh position={[0, 0, 0.05]}>
+            <planeGeometry args={[WALL_SCREENS.width, WALL_SCREENS.height]} />
+            <meshBasicMaterial map={screen.map} toneMapped={false} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/** One neon sign above the bar. Punctuation — a wall of it is a theme pub. */
+function NeonSign() {
+  const map = useMemo(() => neonSignTexture(NEON.text, GLOW.neonPink), []);
+  useEffect(() => () => map.dispose(), [map]);
+
+  return (
+    <mesh position={[...NEON.position]} rotation={[0, Math.PI / 2, 0]}>
+      <planeGeometry args={[NEON.width, NEON.height]} />
+      <meshBasicMaterial
+        map={map}
+        transparent
+        toneMapped={false}
+        depthWrite={false}
+        // Additive, because neon adds light to whatever is behind it rather
+        // than covering it. It is also what lets the bloom pass eat it.
+        blending={THREE.AdditiveBlending}
+      />
+    </mesh>
   );
 }
 
@@ -386,23 +677,20 @@ function Columns() {
 /**
  * The screen, treated as a light.
  *
- * Nothing else in this file matters as much for making the board feel part of
- * the room. A large bright rectangle in a wall lights what is in front of it,
- * and until this existed the 3D scene behaved as though the board were not
- * there at all — which is exactly what "it feels like an overlay" means.
+ * A large bright rectangle in a wall lights what is in front of it. In a room
+ * this warm it is also the main source of cool light at floor level, which is
+ * what keeps the near tables and the nearest faces from going entirely amber.
  */
 export function ScreenLight() {
   const [ax, ay, az] = ANCHORS.board.position;
   return (
     <group>
-      {/* Cool spill out into the audience. */}
       <pointLight
         position={[ax, ay, az + SCREEN_LIGHT.offsetZ]}
         color={SCREEN_LIGHT.color}
         intensity={SCREEN_LIGHT.intensity}
         distance={SCREEN_LIGHT.distance}
       />
-      {/* Warm bounce close in, catching the reveals and the sill. */}
       <pointLight
         position={[ax, ay, az + 0.35]}
         color={SCREEN_LIGHT.reveal.color}
@@ -410,30 +698,6 @@ export function ScreenLight() {
         distance={SCREEN_LIGHT.reveal.distance}
       />
     </group>
-  );
-}
-
-/**
- * The emissive halo sitting just behind the board.
- *
- * Slightly oversized, so the bloom pass bleeds a glow out past the DOM board's
- * edges. That glow is part of the WebGL render, so it overlaps the boundary
- * between the two composited layers and hides the seam.
- */
-export function ScreenHalo() {
-  const [ax, ay, az] = ANCHORS.board.position;
-  const width = BOARD.pixelWidth * BOARD.metresPerPixel + SCREEN_HALO.overscan;
-  const height = BOARD.pixelHeight * BOARD.metresPerPixel + SCREEN_HALO.overscan;
-  return (
-    <mesh position={[ax, ay, az - 0.04]}>
-      <planeGeometry args={[width, height]} />
-      <meshBasicMaterial
-        color={SCREEN_HALO.color}
-        toneMapped={false}
-        transparent
-        opacity={SCREEN_HALO.intensity > 1 ? 1 : SCREEN_HALO.intensity}
-      />
-    </mesh>
   );
 }
 
@@ -447,8 +711,8 @@ export function Lights() {
     }
   });
 
-  const fixtures = useMemo(() => {
-    const { count, startZ, spacing } = LIGHTS.fixtures;
+  const coves = useMemo(() => {
+    const { count, startZ, spacing } = LIGHTS.coves;
     return Array.from({ length: count }, (_, i) => startZ + i * spacing);
   }, []);
 
@@ -471,7 +735,8 @@ export function Lights() {
         shadow-bias={-0.0004}
       />
 
-      {/* Cool rim behind the frame, so the housing separates from the wall. */}
+      {/* Cool rim behind the frame, so the housing separates from the wall.
+          The one cool light in the room, and deliberately so. */}
       <pointLight
         position={[...LIGHTS.rim.position]}
         intensity={LIGHTS.rim.intensity}
@@ -479,22 +744,28 @@ export function Lights() {
         distance={LIGHTS.rim.distance}
       />
 
-      {/* Practical fixtures receding toward the back wall. Each is an emissive
-          plane the bloom pass can catch, plus a light that actually lights. */}
-      {fixtures.map((z, index) => (
-        <group key={index} position={[0, LIGHTS.fixtures.y, z]}>
-          <mesh rotation={[Math.PI / 2, 0, 0]}>
-            <planeGeometry args={[...LIGHTS.fixtures.size]} />
-            <meshBasicMaterial color={LIGHTS.fixtures.color} toneMapped={false} />
-          </mesh>
-          <pointLight
-            intensity={LIGHTS.fixtures.intensity}
-            color={LIGHTS.fixtures.color}
-            distance={LIGHTS.fixtures.distance}
-            position={[0, -0.4, 0]}
-          />
-        </group>
-      ))}
+      {/* Cove lighting down both walls. Every one glows; every third is real. */}
+      {coves.map((z, index) =>
+        [-1, 1].map((side) => (
+          <group
+            key={`${index}:${side}`}
+            position={[side * LIGHTS.coves.offsetX, LIGHTS.coves.y, z]}
+          >
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+              <planeGeometry args={[...LIGHTS.coves.size]} />
+              <meshBasicMaterial color={LIGHTS.coves.color} toneMapped={false} />
+            </mesh>
+            {index % LIGHTS.coves.lightEvery === 0 && side === 1 && (
+              <pointLight
+                intensity={LIGHTS.coves.intensity}
+                color={LIGHTS.coves.color}
+                distance={LIGHTS.coves.distance}
+                position={[-LIGHTS.coves.offsetX, -0.6, 0]}
+              />
+            )}
+          </group>
+        )),
+      )}
     </group>
   );
 }
@@ -502,44 +773,32 @@ export function Lights() {
 /* ---------------------------------------------------------------- housing */
 
 /**
- * The board housing: a brushed metal slab with a recess cut into its face.
- *
- * Built as a frame of four bars rather than a solid box with a boolean, so the
- * recess is real geometry that catches the key light along its inner edges.
- * That inner highlight is what makes the board look set *into* something.
- */
-/**
  * The surround inside the opening.
  *
- * Slim, and sitting inside the wall's reveal rather than proud of it. The wall
- * itself now provides the depth, so this is only the dark border between the
- * masonry and the screen.
+ * Four bars, deep enough to swallow the whole assembly: the drums at the back,
+ * the pane near the front. If the bars ever stop reaching past the glass, the
+ * glass reads as a sheet stuck on the front of the frame instead of a window
+ * into it — see BEZEL.
  */
 export function BoardHousing({ children }: { children?: React.ReactNode }) {
   const { width, height, bezel } = BOARD_FRAME;
   const [ax, ay, az] = ANCHORS.board.position;
-
-  const metal = (
-    <meshStandardMaterial color="#22262e" roughness={0.5} metalness={0.8} />
-  );
+  const { z, depth } = BEZEL;
+  const m = hallMaterials();
 
   return (
     <group position={[ax, ay, az]}>
-      <mesh position={[0, height / 2 - bezel / 2, -0.02]}>
-        <boxGeometry args={[width, bezel, 0.1]} />
-        {metal}
+      <mesh position={[0, height / 2 - bezel / 2, z]} material={m.brassDeep}>
+        <boxGeometry args={[width, bezel, depth]} />
       </mesh>
-      <mesh position={[0, -height / 2 + bezel / 2, -0.02]}>
-        <boxGeometry args={[width, bezel, 0.1]} />
-        {metal}
+      <mesh position={[0, -height / 2 + bezel / 2, z]} material={m.brassDeep}>
+        <boxGeometry args={[width, bezel, depth]} />
       </mesh>
-      <mesh position={[-width / 2 + bezel / 2, 0, -0.02]}>
-        <boxGeometry args={[bezel, height, 0.1]} />
-        {metal}
+      <mesh position={[-width / 2 + bezel / 2, 0, z]} material={m.brassDeep}>
+        <boxGeometry args={[bezel, height, depth]} />
       </mesh>
-      <mesh position={[width / 2 - bezel / 2, 0, -0.02]}>
-        <boxGeometry args={[bezel, height, 0.1]} />
-        {metal}
+      <mesh position={[width / 2 - bezel / 2, 0, z]} material={m.brassDeep}>
+        <boxGeometry args={[bezel, height, depth]} />
       </mesh>
 
       {children}
@@ -550,26 +809,36 @@ export function BoardHousing({ children }: { children?: React.ReactNode }) {
 /** A slim sill along the bottom of the opening. */
 export function TickerHousing() {
   const [tx, ty, tz] = ANCHORS.ticker.position;
+  const m = hallMaterials();
   return (
-    <mesh position={[tx, ty, tz]} castShadow>
+    <mesh position={[tx, ty, tz]} material={m.brassDeep} castShadow>
       <boxGeometry args={[TICKER_HOUSING.width, TICKER_HOUSING.height, TICKER_HOUSING.depth]} />
-      <meshStandardMaterial color="#262a33" roughness={0.5} metalness={0.8} />
     </mesh>
   );
 }
 
-/** Three steps, off to one side. The leaderboard lands here in step 8. */
+/**
+ * Three steps, off to one side. The leaderboard lands here in step 8.
+ *
+ * Brass nosing along the top edge of each one, and that single strip is the
+ * whole difference between a podium and three crates. Unedged, in a dark
+ * material, at this distance, they read as packing cases someone left on the
+ * floor — which is exactly what the first render of this room showed.
+ */
 export function Podium() {
+  const m = hallMaterials();
+  const nose = 0.06;
   return (
     <group>
       {ANCHORS.podium.map((step) => (
-        <mesh
-          key={step.name}
-          position={[step.position[0], step.height / 2, step.position[2]]}
-        >
-          <boxGeometry args={[PODIUM.stepWidth, step.height, PODIUM.stepDepth]} />
-          <meshStandardMaterial color="#1d2029" roughness={0.6} metalness={0.35} />
-        </mesh>
+        <group key={step.name} position={[step.position[0], 0, step.position[2]]}>
+          <mesh position={[0, step.height / 2, 0]} material={m.walnutDeep} castShadow>
+            <boxGeometry args={[PODIUM.stepWidth, step.height, PODIUM.stepDepth]} />
+          </mesh>
+          <mesh position={[0, step.height + nose / 2, 0]} material={m.brass}>
+            <boxGeometry args={[PODIUM.stepWidth + 0.07, nose, PODIUM.stepDepth + 0.07]} />
+          </mesh>
+        </group>
       ))}
     </group>
   );

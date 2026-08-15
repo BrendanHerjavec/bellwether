@@ -12,6 +12,15 @@
  * meeting room, so the perspective has somewhere to run.
  */
 
+import {
+  BOARD_LAYOUT,
+  BOARD_PANEL,
+  BOARD_ROWS,
+  boardPanelHeight,
+  tapeRect,
+} from "./board-layout";
+import { AIR, GLOW } from "./palette";
+
 export const HALL = {
   /**
    * Interior volume. Width runs x, height y, depth z toward the camera.
@@ -123,40 +132,101 @@ export const BOARD_FRAME = {
 } as const;
 
 /**
- * Mapping the DOM board into world space.
+ * The board as an object in the opening.
  *
- * `metresPerPixel` is the honest, testable number: how big a CSS pixel of the
- * board is in the room. It is NOT what gets passed to drei.
+ * It used to be a DOM layer composited over the canvas, and every number here
+ * used to be about reconciling two coordinate systems that never really met.
+ * Now it is a texture on a mesh, so there is only one: metres.
+ *
+ * The two z offsets are the whole "behind glass" effect. The drums sit at the
+ * back of the opening and the pane sits near the front of the bezel, a good
+ * seven centimetres apart — enough that walking past visibly slides the
+ * reflection across the board. Collapse that gap and the glass becomes a decal.
  */
-export const BOARD = {
-  /** Pixel width the DOM board is laid out at, before scaling into the scene. */
-  pixelWidth: 1500,
+export const BOARD_SCREEN = {
+  /** Clearance between the bezel and the edge of the panel. */
+  inset: 0.06,
   /**
-   * Measured height of the rendered board at that width. Row height is fixed
-   * by --flap-h and does not vary with width — only the drum count does — so
-   * this stays put as the board is resized.
-   *
-   * It is measured rather than assumed because the scale below is derived from
-   * it: at the first guessed scale the board came out 12.03m tall inside a
-   * 9.9m frame opening and would have punched straight through its housing.
+   * Where the drums sit, relative to the board anchor. Positive is toward the
+   * room, and it needs to stay positive: the recess's own back face is only
+   * 6cm behind the anchor, and a panel level with it z-fights.
    */
-  pixelHeight: 730,
-  /** World metres per CSS pixel. Sized to the platform, not the cathedral. */
-  metresPerPixel: 0.0078,
+  depth: 0.02,
+  /** Where the pane hangs. */
+  glassZ: 0.1,
+  /**
+   * Texture pixels per design pixel.
+   *
+   * The crispness knob, and it is also the upload cost of every flip — the
+   * whole texture goes to the GPU whenever a drum moves — which is why it is
+   * not simply 2.
+   *
+   * It was 1.2 and is now 1. That is not a downgrade: the board's drums got
+   * half again as wide when the question column dropped from forty positions to
+   * twenty-eight, so each glyph is drawn across *more* texels than before at
+   * the lower factor (31 rather than 28 for a question drum). Fewer, larger
+   * drums buy resolution and cost less to upload at the same time. See
+   * `BOARD_LAYOUT`.
+   */
+  textureScale: 1.0,
 } as const;
 
 /**
- * drei's <Html transform> does not render one CSS pixel as one world unit.
+ * The surround inside the opening, as a box.
  *
- * At `scale={1}` it maps 400 CSS pixels onto 10 world units — 0.025 units per
- * pixel — see the `(distanceFactor || 10) / 400` factor in its source. Passing
- * metres-per-pixel straight through therefore lands the board 40x too small,
- * which is exactly what happened: a 21.75m board rendered 16 CSS pixels wide.
+ * Sized to contain the whole assembly rather than to look right on its own:
+ * its back face must sit behind the drums and its front face in front of the
+ * pane, so the glass reads as a window into the frame rather than a sheet
+ * stuck on the front of it.
  */
-export const HTML_UNITS_PER_PIXEL = 0.025;
+export const BEZEL = {
+  /** Centre, relative to the board anchor. */
+  z: 0.06,
+  depth: 0.2,
+} as const;
 
-/** What actually goes on the <Html transform scale={...}> prop. */
-export const boardHtmlScale = BOARD.metresPerPixel / HTML_UNITS_PER_PIXEL;
+/**
+ * The board's footprint in world units.
+ *
+ * Derived, not chosen: the panel's proportions come from `board-layout.ts` and
+ * it is fitted into the clear opening inside the bezel. The bug this shape of
+ * thing catches is a board 12.03m tall inside a 9.9m opening, which is exactly
+ * what a guessed scale produced the first time.
+ */
+export const BOARD = {
+  pixelWidth: BOARD_PANEL.width,
+  pixelHeight: BOARD_PANEL.height,
+  metresPerPixel: boardGeometry(BOARD_ROWS).metresPerPixel,
+} as const;
+
+/**
+ * Where the board's parts sit inside the opening, for a given market count.
+ *
+ * Fitted rather than scaled by a constant: a ninth market makes the panel
+ * taller and it shrinks to suit, instead of growing out through its own
+ * housing. `BoardScreen` sizes its meshes from this and nothing else, so what
+ * the tests check here is what the room renders.
+ */
+export function boardGeometry(rows: number) {
+  const panelWidth = BOARD_LAYOUT.designWidth;
+  const panelHeight = boardPanelHeight(rows);
+  const clearWidth = BOARD_FRAME.width - BOARD_FRAME.bezel * 2 - BOARD_SCREEN.inset * 2;
+  const clearHeight = BOARD_FRAME.height - BOARD_FRAME.bezel * 2 - BOARD_SCREEN.inset * 2;
+  const metresPerPixel = Math.min(clearWidth / panelWidth, clearHeight / panelHeight);
+
+  const rect = tapeRect(rows);
+  return {
+    metresPerPixel,
+    panel: [panelWidth * metresPerPixel, panelHeight * metresPerPixel] as const,
+    tape: {
+      width: rect.width * metresPerPixel,
+      height: rect.height * metresPerPixel,
+      x: (rect.x + rect.width / 2 - panelWidth / 2) * metresPerPixel,
+      y: (panelHeight / 2 - (rect.y + rect.height / 2)) * metresPerPixel,
+      designWidth: rect.width,
+    },
+  };
+}
 
 export const TICKER_HOUSING = {
   width: 13.0,
@@ -213,47 +283,67 @@ export const CAMERA_DRIFT = {
 } as const;
 
 /**
- * Warm key from above, cool fill from behind.
+ * Tungsten, and not much of it.
  *
- * Substantially brighter than the first pass, which was atmospheric and
- * genuinely hard to look at. A station concourse at night is dim but it is not
- * a cave — the tiled walls bounce a lot of light, and the room has to be
- * readable before it is moody.
+ * The ambient was `#8b97ad` at 0.42 — a cool grey fill laid over every surface
+ * in the room, and between it and a cool fog it was quietly cancelling the one
+ * warm light in the scene. Now the fill is warm bounce off carpet and wood,
+ * which is what it would actually be.
+ *
+ * The room is lit by many small warm sources, and almost none of them are real
+ * lights. Every material loops over every light per fragment; a pendant lamp
+ * that is an emissive globe costs nothing, and four of the eight being real is
+ * indistinguishable from all eight.
  */
 export const LIGHTS = {
-  ambient: { intensity: 0.42, color: "#8b97ad" },
+  ambient: { intensity: 0.78, color: AIR.ambient },
   key: {
-    position: [0, 9.2, 2] as const,
+    position: [0, 8.8, 1.5] as const,
     target: [0, 5.4, HALL.backWallZ] as const,
-    intensity: 190,
-    color: "#ffd7a0",
-    angle: 0.72,
-    penumbra: 0.85,
-    distance: 60,
+    intensity: 170,
+    color: GLOW.tungsten,
+    angle: 0.78,
+    penumbra: 0.9,
+    distance: 58,
   },
-  /** Cool rim from behind the board, separating the frame from the wall. */
+  /**
+   * Cool rim from behind the board, separating the frame from the wall.
+   *
+   * The one cool light in the room, and it stays cool deliberately: everything
+   * warm reads warmer for having something to be warm *against*.
+   */
   rim: {
     position: [0, 6.8, HALL.backWallZ - 1.5] as const,
-    intensity: 30,
+    intensity: 26,
     color: "#6f96d6",
     distance: 24,
   },
   /**
-   * Practical ceiling fixtures, running the length of the hall.
+   * Cove lighting down both side walls, receding toward the board.
    *
-   * Doubled up and brightened. In a station these are the main source, not an
-   * accent, and a long receding row of them is half of why a platform reads as
-   * a platform.
+   * This was a row of station strip lights down the centre of the ceiling. Two
+   * runs tucked against the walls do the same job for depth — repetition
+   * vanishing into haze is what makes a room read as long — and they do it
+   * without hanging anything across the sightline to the board.
    */
-  fixtures: {
-    count: 10,
-    startZ: -14,
-    spacing: 4.4,
-    y: HALL.height - 0.4,
-    intensity: 34,
-    color: "#ffeacb",
-    distance: 22,
-    size: [6.5, 0.42] as const,
+  coves: {
+    count: 9,
+    startZ: -15,
+    spacing: 4.6,
+    y: HALL.height - 1.5,
+    offsetX: 9.4,
+    intensity: 88,
+    color: GLOW.lampWarm,
+    distance: 26,
+    size: [0.5, 3.4] as const,
+    /** Only every third cove is a real light. See the note above. */
+    lightEvery: 3,
+  },
+  /** Per pendant lamp. Only some of them are real; see PENDANTS.lightEvery. */
+  pendant: {
+    intensity: 30,
+    color: GLOW.tungsten,
+    distance: 10,
   },
   /*
    * There was a warm floor bounce here, to keep the underside of the frame off
@@ -261,11 +351,7 @@ export const LIGHTS = {
    *
    * A point light near a floor always lays down a hard elliptical pool, and in
    * the blockout renders it read as a lamp lying on the ground. Moving it and
-   * dimming it only relocated the artifact. The key light and the ceiling
-   * fixtures already reach the base of the frame, so the light was fighting the
-   * composition for no gain. If the frame base ever reads too dark against the
-   * reflective floor, the fix is a wide, very low area light facing up from
-   * under the bezel — not a point light on the floor.
+   * dimming it only relocated the artifact.
    */
 } as const;
 
@@ -289,8 +375,17 @@ export const LIGHTS = {
  * board sits at 94% transmittance — effectively unhazed — while the far end of
  * the room is down at 81%.
  */
+/**
+ * And the colour of the haze is the most important colour in the file.
+ *
+ * Exponential fog tints *everything* by distance, so it decides what the depth
+ * of the room is made of before any material gets a say. It was `#141a24`, a
+ * cool blue, sitting in front of every warm surface in the building — the
+ * single biggest reason the room read grey no matter how the lights were
+ * tuned. Warm haze, and the far end of the room goes amber instead of ash.
+ */
 export const FOG = {
-  color: "#141a24",
+  color: AIR.fog,
   density: 0.01,
 } as const;
 
@@ -302,7 +397,7 @@ export const FOG = {
  * exposure lifts the whole image and keeps the contrast that makes the room
  * look lit rather than painted.
  */
-export const EXPOSURE = 1.35;
+export const EXPOSURE = 1.62;
 
 /**
  * The screen as a light source.
@@ -327,35 +422,37 @@ export const SCREEN_LIGHT = {
   },
 } as const;
 
-/**
- * The emissive halo behind the board.
+/*
+ * There was a SCREEN_HALO here: an emissive plane slightly larger than the
+ * board, a few centimetres behind it, so the bloom pass bled a glow out past
+ * the board's edges and hid the seam where the DOM layer met the render.
  *
- * A plane slightly larger than the screen, sitting a few centimetres behind it
- * inside the recess. The bloom pass picks it up and bleeds a glow out past the
- * board's edges — and because that glow IS part of the WebGL render, it visually
- * welds the DOM rectangle to the scene it is floating in front of.
+ * It is gone, and the way it went is worth recording. Once the board became
+ * geometry, that plane was an opaque, oversized rectangle sitting one
+ * centimetre NEARER the camera than the board — so it covered it completely
+ * and the screen went blank. It had never mattered before because the DOM
+ * board was composited on top of the canvas whatever the depth buffer said.
+ *
+ * It is not worth reinstating behind the panel either: its overscan would fall
+ * entirely inside the 6cm gap between the board's edge and the bezel, which
+ * the bezel then covers. The board is bright enough for the bloom pass on its
+ * own, and `SCREEN_LIGHT` is what actually puts the screen's glow in the room.
+ *
+ * `lib/hall.test.ts` now asserts the depth order of the whole assembly, which
+ * is the check that would have caught this before it was ever rendered.
  */
-export const SCREEN_HALO = {
-  overscan: 0.55,
-  color: "#aebfd8",
-  intensity: 1.15,
-} as const;
 
 /**
- * Atmospheric blend applied to the board in CSS.
+ * Exponential transmittance through the haze, 0..1.
  *
- * The board cannot receive the scene's fog, because it is composited outside
- * the canvas. So the fog is computed for its distance and painted on as an
- * overlay. Derived from FOG and CAMERA rather than eyeballed, so it stays
- * correct when either changes.
+ * There used to be a partner to this that computed the same figure and handed
+ * it to the board as a CSS overlay, because a DOM layer composited outside the
+ * canvas receives no fog and had to have it painted on. The board is geometry
+ * now and gets the real thing, so only the honest version is left — used by the
+ * tests to check the haze dissolves the far corners without eating the board.
  */
-export function fogBlendAt(distance: number): number {
-  return 1 - Math.exp(-Math.pow(FOG.density * distance, 2));
-}
-
-/** How much fog sits between the camera and the board, 0..1. */
-export function boardFogBlend(): number {
-  return fogBlendAt(CAMERA.position[2] - ANCHORS.board.position[2]);
+export function transmittanceAt(distance: number): number {
+  return Math.exp(-Math.pow(FOG.density * distance, 2));
 }
 
 /**
@@ -366,18 +463,21 @@ export function boardFogBlend(): number {
  * wait, which is the point — an all hands is a room full of people waiting for
  * something to be announced.
  */
-export const STATION = {
-  /** Tiled dado, plain render above, as in most stations. */
-  tileHeight: 4.0,
-  /** The painted safety line along the platform edge. */
-  safetyLine: {
-    // In front of the camera. At z=9.5 it was behind the viewer and never
-    // appeared in a single frame.
-    z: -8,
-    width: 0.5,
-    color: "#d8a12a",
-  },
-  /** Exposed ceiling beams across the width. */
+/**
+ * The shell: panelling, rail, beams.
+ *
+ * This used to be `STATION` — a tiled dado, a painted safety line and platform
+ * benches. Those four cues were doing an enormous amount of work to make the
+ * room read as somewhere you wait for a train, which was the old brief. They
+ * are replaced rather than dressed up, because a tiled wall with a bar in
+ * front of it reads as a station with a bar in it.
+ */
+export const ROOM = {
+  /** Walnut panelling to picture-rail height, dark paint above. */
+  panelHeight: 2.9,
+  /** The brass picture rail capping it. The one bright line at eye level. */
+  rail: { height: 0.09, depth: 0.07 },
+  /** Exposed beams across the width, in stained timber rather than steel. */
   beams: {
     count: 16,
     startZ: -15,
@@ -385,12 +485,129 @@ export const STATION = {
     depth: 0.42,
     drop: 0.45,
   },
-  // The audience seating replaced the loose platform benches; these are the
-  // few left along the side walls, well behind the rows.
-  benches: [
-    { position: [-11.5, 0, -12] as const, rotation: 0 },
-    { position: [11.5, 0, -12] as const, rotation: Math.PI },
-  ],
+} as const;
+
+/**
+ * The bar, down the left-hand wall.
+ *
+ * Placed by what the camera can actually see, not by where a bar would go. The
+ * frustum is narrow near the camera and wide at the back — at z=0 only about
+ * six metres either side of centre is in shot, and at z=-12 it is fifteen. A
+ * bar running the near half of the room would be almost entirely off-screen,
+ * so this sits in the middle distance where the view has opened out.
+ */
+export const BAR = {
+  /** Counter centreline, and the wall its back bar stands against. */
+  x: -11.9,
+  wallX: -13.85,
+  /*
+   * Sat deep, and that is the frustum's doing rather than a floor plan's.
+   *
+   * The side walls are only in shot beyond about z=-10: nearer than that the
+   * frame is narrower than the room is wide, so anything against a wall is
+   * outside it. The first pass ran the bar from -15.5 to -8 and the near third
+   * was simply not in the picture.
+   */
+  from: -16.2,
+  to: -9.5,
+  counterHeight: 1.12,
+  counterDepth: 0.95,
+  /** The brass foot rail. Nothing says "bar" faster from across a room. */
+  footRail: { y: 0.28, radius: 0.05, offset: 0.62 },
+  /** Backlit bottle shelf, the only lit thing at standing height. */
+  shelf: { bottom: 1.3, top: 2.9 },
+  stools: {
+    x: -10.75,
+    from: -15.6,
+    to: -10.1,
+    spacing: 1.52,
+    seatHeight: 0.79,
+  },
+} as const;
+
+/**
+ * Booths down the right-hand wall.
+ *
+ * The counterweight to the bar. Two runs converging toward the board is what
+ * gives the room its perspective now that the seating rows are gone.
+ */
+export const BOOTHS = {
+  x: 12.5,
+  backX: 13.85,
+  z: [-15.4, -13.1, -10.8],
+  width: 2.05,
+  seatHeight: 0.46,
+  backHeight: 1.4,
+  tableHeight: 0.75,
+} as const;
+
+/**
+ * High tables, and the lamps over them.
+ *
+ * Kept out of the middle, and that is a sightline rule rather than taste. The
+ * board occupies about the central third of the frame; anything nearer the
+ * camera than it, and closer to the centreline than `x = 0.29 * distance`,
+ * projects on top of it. Tables are below eye height so they can never do it,
+ * but the pendant lamps hanging over them can — see `lib/hall.test.ts`.
+ */
+export const TABLES = [
+  { position: [-6.4, 0, -2.6] as const, pendant: true },
+  { position: [6.9, 0, -3.4] as const, pendant: true },
+  { position: [-8.2, 0, -6.8] as const, pendant: true },
+  { position: [8.6, 0, -7.4] as const, pendant: true },
+  { position: [-5.6, 0, -11.2] as const, pendant: true },
+  { position: [5.2, 0, -11.8] as const, pendant: true },
+  { position: [-2.9, 0, -14.4] as const, pendant: false },
+  { position: [3.1, 0, -14.9] as const, pendant: false },
+] as const;
+
+export const TABLE = {
+  topRadius: 0.56,
+  topThickness: 0.07,
+  height: 1.06,
+  columnRadius: 0.06,
+  baseRadius: 0.42,
+} as const;
+
+export const PENDANTS = {
+  /** Hung low over the tables, and low enough to clear the board's bottom edge
+   *  everywhere it is allowed to be. */
+  y: 2.32,
+  shadeRadius: 0.24,
+  shadeHeight: 0.2,
+  globeRadius: 0.075,
+  /** Only every other lamp is a real light. */
+  lightEvery: 2,
+} as const;
+
+/**
+ * Screens on the side walls.
+ *
+ * The cool counterpoint the whole palette rests on. A room lit entirely in
+ * tungsten is monochrome in a warmer hue; a bank of blue-white screens is what
+ * makes the amber read as amber, and it is the difference between a pub and a
+ * sportsbook.
+ *
+ * They show markets, not stock footage. This room is already watching one
+ * board — these are the same floor, seen closer.
+ */
+export const WALL_SCREENS = {
+  y: 3.9,
+  width: 2.5,
+  height: 1.41,
+  inset: 0.12,
+  bezel: 0.06,
+  /** z positions, mirrored to both walls. */
+  z: [-15.9, -13.3, -10.7] as const,
+  labels: ["Roadmap", "ARR", "Pricing", "Mobile", "Logos", "Enterprise"] as const,
+} as const;
+
+/** One neon sign, above the bar. Punctuation, not decor — a wall of it is a theme pub. */
+export const NEON = {
+  position: [BAR.wallX + 0.12, 4.4, (BAR.from + BAR.to) / 2] as const,
+  width: 4.4,
+  height: 1.1,
+  text: "BELLWETHER",
 } as const;
 
 /**
@@ -403,66 +620,108 @@ export const STATION = {
  * That backlighting is why they can stay this simple without looking cheap.
  */
 /**
- * Rows of seating facing the screen.
+ * How the people are arranged, and why they are allowed to stand now.
  *
- * Built as continuous benches rather than individual chairs: at this distance
- * the difference is invisible, and it is three meshes a row instead of fifty.
+ * They used to be seated in auditorium rows, and that was never a staging
+ * choice — it was a workaround. The board was DOM composited outside the
+ * canvas, so geometry physically could not occlude it: a figure between the
+ * camera and the screen rendered *behind* it, and the screen appeared to float
+ * in front of their face. Seating everybody below the camera's eye height meant
+ * no head could ever project onto the board, at any distance, at any focal
+ * length. It bought that invariant outright, and it cost the room every sign
+ * of life.
+ *
+ * The board is a mesh now and occludes correctly, so the constraint is gone and
+ * the room can be a room. People stand at the rail, lean on the bar and perch
+ * at the high tables, and some of them have their backs to the screen — which
+ * is what a bar looks like and what an auditorium never does.
+ *
+ * One rule is kept from the old arrangement, for taste rather than necessity:
+ * nobody stands in the middle distance dead ahead. A silhouette parked across
+ * the odds is annoying rather than atmospheric.
  */
-export const SEATING = {
-  rows: [-10, -7, -4, -1, 2, 5],
-  width: 19,
-  seatHeight: 0.45,
-  backHeight: 0.55,
-  depth: 0.6,
-} as const;
+export type AvatarPose = "stand" | "lean" | "perch";
 
-/**
- * Where the people sit.
- *
- * SEATED, and that is the whole point. The board is DOM composited outside the
- * WebGL canvas, so 3D geometry physically cannot occlude it — a figure standing
- * between the camera and the screen renders *behind* it, and the screen looks
- * like it is floating in front of their face.
- *
- * The fix is geometric rather than technical. A point below the camera's eye
- * height always projects below the horizon line; a point above it always
- * projects above. So as long as every head is lower than the camera and the
- * board's bottom edge is higher than it, no head can overlap the board at any
- * distance, at any focal length. Seating everybody buys that invariant, and it
- * is exactly what an auditorium looks like anyway.
- *
- * `lib/hall.test.ts` enforces both halves of it.
- */
 export const AVATAR = {
-  /** Head height when seated. Must stay below CAMERA.position[1]. */
-  seatedHeadHeight: 1.25,
+  /** Head height standing. Above the camera's eye line, and that is now fine. */
+  standingHeadHeight: 1.68,
+  /** Head height perched on a stool. */
+  perchedHeadHeight: 1.44,
   /** Shoulder width, used to check a figure is not half out of frame. */
   width: 0.5,
 } as const;
 
 export const AVATARS = [
-  { id: "you", position: [-1.2, 0, -1] as const, scale: 1.0, phase: 0.0 },
-  { id: "bot-optimist", position: [2.6, 0, -1] as const, scale: 0.97, phase: 1.7 },
-  { id: "bot-cynic", position: [-4.5, 0, -4] as const, scale: 1.03, phase: 3.1 },
-  { id: "bot-contrarian", position: [5.0, 0, -4] as const, scale: 0.95, phase: 4.6 },
-  { id: "bot-informed", position: [0.8, 0, -10] as const, scale: 1.01, phase: 2.3 },
+  {
+    // At the rail down the left, watching the board.
+    id: "bot-cynic",
+    position: [-6.9, 0, -6.2] as const,
+    pose: "stand" as AvatarPose,
+    /** Rotation about y. 0 faces the board; PI turns their back on it. */
+    facing: 0.18,
+    scale: 1.03,
+    phase: 3.1,
+  },
+  {
+    // Perched at a high table, half turned away, mid-conversation.
+    id: "bot-optimist",
+    position: [7.5, 0, -3.9] as const,
+    pose: "perch" as AvatarPose,
+    facing: -0.62,
+    scale: 0.97,
+    phase: 1.7,
+  },
+  {
+    // Leaning on the bar with their back to the room.
+    id: "bot-contrarian",
+    position: [BAR.stools.x + 0.3, 0, -11.4] as const,
+    pose: "lean" as AvatarPose,
+    facing: -1.42,
+    scale: 0.95,
+    phase: 4.6,
+  },
+  {
+    // Well back, and far enough off centre to clear the odds. At x=2.6 they
+    // stood squarely across the board; the framing test caught it.
+    id: "bot-informed",
+    position: [4.3, 0, -12.6] as const,
+    pose: "stand" as AvatarPose,
+    facing: -0.12,
+    scale: 1.01,
+    phase: 2.3,
+  },
+  {
+    // You, near the camera and out to one side. Hidden in walk mode.
+    id: "you",
+    position: [-4.4, 0, -1.4] as const,
+    pose: "stand" as AvatarPose,
+    facing: 0.1,
+    scale: 1.0,
+    phase: 0.0,
+  },
 ] as const;
 
 /** @deprecated use AVATAR.width */
 export const AVATAR_WIDTH = AVATAR.width;
 
+/**
+ * The floor, and the most expensive thing that used to be on it.
+ *
+ * This was a `MeshReflectorMaterial`: a mirrored, blurred re-render of the
+ * entire scene, every frame, comfortably the largest single cost in the room.
+ * It was there because a station platform has polished concrete.
+ *
+ * A sportsbook has carpet, and carpet does not reflect. So the change that
+ * makes the room look right also deletes the biggest item in the frame budget,
+ * which is not the usual direction of that trade. The slight sheen left below
+ * is the pendant lamps pooling on the pile — a standard material gives that
+ * away for nothing.
+ */
 export const FLOOR = {
-  /** Reflection blur, in drei's MeshReflectorMaterial units. */
-  blur: [340, 90] as const,
-  resolution: 1024,
-  mixBlur: 1.05,
-  mixStrength: 32,
-  roughness: 0.82,
-  depthScale: 1.15,
-  minDepthThreshold: 0.35,
-  maxDepthThreshold: 1.3,
-  color: "#0a0b10",
-  metalness: 0.62,
+  /** Metres of real floor covered by one tile of the carpet pattern. */
+  patternMetres: 3.2,
+  roughness: 0.86,
+  metalness: 0.06,
 } as const;
 
 export const POST = {
@@ -490,66 +749,53 @@ export const POST = {
 /**
  * Quality tiers.
  *
- * The scene has four expensive things in it and they are all optional. In
- * rough order of cost:
+ * The scene has three expensive things left in it and they are all optional.
+ * In rough order of cost:
  *
- *   1. the floor's real-time reflection, which re-renders the scene into a
- *      blurred buffer every frame — comfortably the most expensive item here;
- *   2. device pixel ratio, which is quadratic: dpr 2 on a 1600x900 canvas is
+ *   1. device pixel ratio, which is quadratic: dpr 2 on a 1600x900 canvas is
  *      3.2 million pixels shaded, dpr 1.5 is 1.8 million;
- *   3. depth of field, the costliest post pass, and the one with the least to
- *      show for itself since it cannot touch the board anyway;
- *   4. shadow mapping, which costs an extra scene pass per shadowed light.
+ *   2. depth of field, the costliest post pass;
+ *   3. shadow mapping, which costs an extra scene pass per shadowed light.
  *
- * ...except none of that was the actual problem, which is worth recording.
+ * There used to be a fourth above all of them — the floor's real-time
+ * reflection, an extra render of the whole scene into a blurred buffer every
+ * frame. It went out with the polished concrete when the floor became carpet.
+ * See FLOOR.
  *
- * The board is a <Html transform>, and drei rewrites its wrapper's CSS matrix
- * on EVERY frame. That wrapper holds thousands of DOM nodes with preserve-3d,
- * gradients and box-shadows, so each rewrite re-rasterises the lot on the main
- * thread — which is why the page sat at 10fps with buttons that would not
- * respond. A GPU bottleneck cannot block a click; a main-thread one can.
+ * There used to be a fifth, and it dwarfed all four: the board was a DOM layer
+ * whose CSS matrix drei rewrote every frame, re-rasterising several thousand
+ * nodes on the main thread. That is why the room sat at 10-20fps with buttons
+ * that would not respond — a GPU bottleneck cannot block a click, a main-thread
+ * one can. The board is a texture on a mesh now, and the tier that used to
+ * shrink it (`boardPixelWidth`) is gone with it.
  *
- * So `boardPixelWidth` is the most valuable number here. The board displays
- * around 630 CSS pixels wide on a 1600px canvas, so rendering it at 1500 was
- * paying for more than twice the DOM and raster area than could ever be seen.
- * Dropping it also drops the drum count, which is where the nodes are.
+ * What is left is honest GPU cost, and the list above is in the order it should
+ * be spent.
  */
 export const QUALITY = {
   high: {
     label: "High",
     dpr: [1, 2] as [number, number],
-    reflections: true,
-    reflectionResolution: 1024,
-    reflectionBlur: [340, 90] as [number, number],
     depthOfField: true,
     bloom: true,
     shadows: true,
     noise: true,
-    boardPixelWidth: 1400,
   },
   balanced: {
     label: "Balanced",
     dpr: [1, 1.5] as [number, number],
-    reflections: true,
-    reflectionResolution: 512,
-    reflectionBlur: [220, 60] as [number, number],
     depthOfField: false,
     bloom: true,
     shadows: false,
     noise: false,
-    boardPixelWidth: 1100,
   },
   performance: {
     label: "Performance",
     dpr: [1, 1] as [number, number],
-    reflections: false,
-    reflectionResolution: 256,
-    reflectionBlur: [140, 40] as [number, number],
     depthOfField: false,
     bloom: true,
     shadows: false,
     noise: false,
-    boardPixelWidth: 850,
   },
 } as const;
 

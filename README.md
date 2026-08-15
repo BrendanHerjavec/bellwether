@@ -20,12 +20,19 @@ Play credits only. Never money, never convertible to money.
 npm run dev
 ```
 
-| Route   | What it is                                                            |
-| ------- | --------------------------------------------------------------------- |
-| `/`     | The argument for why this exists                                      |
-| `/play` | **The trader view.** Balance, markets, stakes, positions, perks        |
-| `/board`| The room display. Dark, sparse, meant for a projector                  |
-| `/lab`  | The split-flap board in isolation, with every animation knob exposed   |
+| Route           | What it is                                                     |
+| --------------- | -------------------------------------------------------------- |
+| `/`             | The argument for why this exists                               |
+| `/play`         | **The trader view.** Balance, markets, stakes, positions, perks |
+| `/board`        | The room display. The bulb board inside the 3D hall            |
+| `/lab`          | The DOM split-flap board, with every animation knob exposed     |
+| `/lab/raster`   | The hall's bulb board, flat and full size, with a manual step   |
+| `/lab/textures` | Every generated surface in the room, flat and tiled 2×2         |
+| `/lab/still`    | **One frame of the hall, rendered on demand.** See below        |
+
+The three `/lab` pages under it are not decoration. This repo cannot render
+WebGL — see "the hall" — so they are the only way anything in the room gets
+looked at before it ships.
 
 ### Two surfaces, on purpose
 
@@ -34,8 +41,8 @@ inconsistency. The board is a physical object projected on a wall in a dimmed
 room, and the brief is specific that it should read as a quiet trading floor at
 night. The trader view is a page someone opens at their desk ten minutes before
 the meeting, and it has to explain an unfamiliar idea fast. The thread between
-them is the odds readout: the same split-flap mechanism, dropped into the light
-cards as a small dark inset.
+them is the odds readout: the same markets, on the big board in the room and
+inset as a small dark card on the trader's page.
 
 ```bash
 npm test          # LMSR and split-flap unit tests
@@ -101,106 +108,240 @@ toggle. The fallback is not a nicety — the hall is the only part of this app
 that can be too slow on a given laptop, and a projected board that stutters is
 worse than one that is merely flat.
 
-**The board cannot join the render, so the render joins the board.**
+**The board is painted into a texture, and that reversed two decisions.**
 
-Being composited outside the canvas means the board receives no bloom, no fog,
-no depth of field and no colour grade — it is lit by CSS while everything around
-it is lit by three.js. That is precisely what "it feels like an overlay" means,
-and no amount of repositioning fixes it. Rendering it to a texture would fix it
-and give up the crisp text the whole approach exists to protect. So instead:
+It used to be a drei `<Html transform>`: real DOM, positioned by the camera
+matrix but composited outside the canvas. The argument for it was crispness —
+the digits stay real text instead of becoming a blurry texture. Two things
+eventually outweighed that.
+
+*It could not belong.* A layer outside the canvas receives no fog, no bloom, no
+depth of field and no colour grade, and nothing in the scene can occlude it. It
+was lit by CSS while everything around it was lit by three.js, which is exactly
+what "it feels like an overlay" means. A CSS fog tint got it closer and could
+never get it there, because the problem was compositing order.
+
+*It could not be moved past.* drei rewrites the wrapper's CSS matrix every
+frame. That wrapper held ~340 drums — some 3,700 nodes with preserve-3d,
+gradients and box-shadows — and the browser re-rasterised the lot on the main
+thread each time the camera moved. Walking the hall sat at 10–20fps for that
+reason alone, with buttons that would not respond: a GPU bottleneck cannot block
+a click, a main-thread one can.
+
+So `components/board/board-raster.ts` paints the board into a 2D canvas and
+`BoardScreen` maps it onto a mesh. The cost is bounded by painting **only what
+moved**: the repaint is banded, the texture is uploaded only on frames that
+changed something, and a board with nothing happening on it costs nothing.
+
+Two bands exist purely because of that discipline, and both were measured
+rather than guessed. The trade counter in the header changes on every trade —
+marking the whole board dirty for it meant repainting twenty-two thousand bulbs
+several times a second for two digits, so the header repaints alone. And a
+price change repaints the price cell alone, because the question beside it is
+twenty-one characters of eleven-row dot grid — some two and a half thousand
+bulbs that have not changed and will not.
+
+**And it is no longer a split-flap.** It was a Solari departure board: genuinely
+charming, and a *train station's* display hanging in a sportsbook — the last
+thing in the scene still speaking the language the room used to speak. It is
+now the 1970s race-and-sports book equivalent: incandescent bulbs on a black
+field.
+
+That change was made by looking. Four candidates were painted at full size with
+real data — split-flap, bulb, flip-dot, and a bookmaker's chalkboard — and the
+bulb board won on three counts: it is the display this room would actually have,
+bright-points-on-black is the most legible thing you can hang on a wall, and it
+is about a third the drawing cost per character of a flap. It also finally made
+the board **readable from the camera**, which the split-flap never was.
+
+Two things about rendering text as dots are worth keeping:
+
+- **There is no bitmap font.** `textDots` draws real text into a tiny offscreen
+  canvas and lights a dot wherever a pixel came out dark enough. That is roughly
+  how sign-driver software works, it costs no font data, and any string renders
+  in the app's own typeface for free.
+- **The face and the threshold are both load-bearing.** Drawn in the board's own
+  condensed face at seven dot-rows, "PRICING CHANGE NAMED" rendered as
+  "PBICIOB CHAOBE HAMED" — a condensed letter is four dots wide, which cannot
+  keep B from R. Eleven rows of Inter fixes that; dropping the alpha threshold
+  from 128 to 60 fixes the rest, because at 128 the thin diagonals vanish and M
+  reads as N, Q as O.
+
+The information changed with the mechanism. A row is no longer a spreadsheet
+line: the question carries a rule underneath showing **credits actually at
+risk** (outstanding shares, straight off the market maker's state), a session
+line shows the shape of where the room has been, and the price is the headline.
+That hierarchy is deliberate and `lib/hall.test.ts` pins it — from a seat the
+whole board is about 500 screen pixels wide, so the label is four pixels tall
+and legible to nobody. The price and the shape are what read from the room; the
+question is a detail you get by walking over.
+
+Two things carry the "set into the wall" reading:
 
 1. **The screen is a light.** `ScreenLight` puts real lights at the board's
    position, so the reveals, the seat backs and the nearest heads are lit *by*
-   the screen — as an audience is in a real auditorium. Until this existed
-   nothing in the 3D scene acknowledged that a large bright rectangle was in the
-   wall.
-2. **An emissive halo sits behind it.** Slightly oversized, so the bloom pass
-   bleeds glow out past the DOM board's edges. That glow *is* in the render, so
-   it straddles the seam between the two layers and hides it.
-3. **The board is graded to the scene's own fog.** `boardFogBlend()` computes
-   how much atmosphere sits between camera and board from `FOG.density` and the
-   camera distance, and it is painted on as a CSS overlay. Derived, not
-   eyeballed, so the two cannot drift apart — currently 6% at 24.94m.
+   the screen — as an audience is in a real auditorium.
+2. **There is glass, hanging well in front of the drums.** The panel sits at
+   the back of the opening and the pane near the front of the bezel, eight
+   centimetres apart, with the bezel deep enough to swallow both. The reflection
+   slides across the board as you walk, and that parallax is the entire effect —
+   collapse the gap and it becomes a decal.
+
+**A third thing used to be there, and taking it out is the lesson.**
+`ScreenHalo` was an emissive plane slightly *larger* than the board, sitting a
+centimetre nearer the camera, so the bloom pass would bleed glow past the DOM
+board's edges and hide the seam. It was harmless for exactly as long as the
+board was composited on top of the canvas, because the depth buffer did not get
+a say. The moment the board became geometry, an opaque oversized rectangle was
+in front of it and the screen went blank.
+
+`lib/hall.test.ts` now declares the depth order of the whole assembly — recess
+face, panel, tape, glass, bezel — and asserts nothing opaque sits between the
+camera and the panel. That is the check that would have caught it without ever
+rendering a frame, which matters here, because this repo cannot render one.
+
+`/lab/raster` shows the painted texture flat and full size, with a manual step,
+because in the hall it is a texture at an angle in a hazy room behind glass —
+and there is otherwise no way to tell a mispainted bulb from a bad camera angle.
 
 **Brightness and depth are separate controls.** Thinning the fog to fix "too
 dark" flattened the hall into a lit box with no distance in it. `EXPOSURE`
 carries the brightness; the fog stays dense enough to dissolve the far corners.
 The board sits at 94% transmittance, the far end of the room at 81%.
 
-**Quality tiers.** Four things dominate the frame budget, in order: the floor's
-real-time reflection (an extra render of the scene, blurred, every frame),
-device pixel ratio (quadratic — dpr 2 is 3.2M pixels on a 1600x900 canvas, dpr
-1.5 is 1.8M), depth of field (costliest post pass, and it cannot touch the board
-anyway), and shadow mapping. `balanced` keeps the reflection and the bloom,
-which are what the room is made of, and drops the other two. There is an fps
-readout in the controls, because the scene cannot be profiled from the
-environment it is written in.
+**Quality tiers, and a renderer that finds its own resolution.** Four things
+dominate the frame budget, in order: the floor's real-time reflection (an extra
+render of the scene, blurred, every frame), device pixel ratio (quadratic — dpr
+2 is 3.2M pixels on a 1600x900 canvas, dpr 1.5 is 1.8M), depth of field, and
+shadow mapping. `balanced` keeps the reflection and the bloom, which are what
+the room is made of, and drops the other two. On top of that, drei's
+`PerformanceMonitor` slides the pixel ratio **within the tier's own range**, so
+the tier buttons set a ceiling and the machine finds what it can hold under it.
 
-**The screen cannot be occluded, so nothing is allowed in front of it.**
+There is also a lighting cost that is easy to miss: every material loops over
+every light, per fragment, and the reflection makes it do that twice. Ten
+ceiling point lights in a row was the most expensive thing in the shader. All
+ten fixtures still glow — the emissive planes are what you actually see receding
+into the haze, and they cost nothing — but only every third is a real light.
 
-The board is DOM composited outside the WebGL canvas, which means 3D geometry
-physically cannot occlude it: a figure standing between the camera and the
-screen renders *behind* it, and the screen appears to float in front of their
-face. drei's `occlude` does not rescue this — the raycast modes hide the whole
-element, so one passer-by would blank the entire board, and `blending` needs a
-transparent canvas that fights the EffectComposer.
+**Nothing is allowed in front of the screen, and it is no longer a technical
+constraint.** It used to be one: the board was DOM composited outside the
+canvas, so geometry physically could not occlude it and a figure between the
+camera and the screen rendered *behind* it. The board is a mesh now and occludes
+correctly. The auditorium staging stayed regardless, because it is good staging.
+Anything below the camera's eye height projects below the horizon line, so
+seating everybody guarantees a clean read of the odds from anywhere in the room,
+which is the entire job of a tote board. `lib/hall.test.ts` still asserts it.
 
-The fix is projective rather than technical, and it is why the room is an
-auditorium. Anything below the camera's eye height projects below the horizon
-line; anything above it projects above. So if **every head is lower than the
-camera and the screen's bottom edge is higher**, they can never overlap — at any
-distance, at any focal length. Seating the audience buys that invariant outright.
-`lib/hall.test.ts` asserts both halves with margin; break either and the
-floating screen comes back.
+The screen is set into a real opening cut through the back wall, with reveals
+lining its sides, rather than hung in front of a flat plane. The shadow down the
+reveal is what tells the eye it is part of the building.
 
-The screen is also set into a real opening cut through the back wall, with
-reveals lining its sides, rather than hung in front of a flat plane. The shadow
-down the reveal is what tells the eye it is part of the building.
+**Walking the hall removes you from it.** In every other camera mode the figure
+labelled "You" is where you are sitting. In walk mode the camera *is* you, so
+leaving the figure in puts a second you in the room — one you can walk up to and
+read the name tag of, which is a stranger sight than an empty seat.
 
-**Two things about the Canvas boundary that cost real time.**
+**React context does not cross the Canvas boundary.** R3F runs its own
+reconciler. A board that read `useTrading()` threw "must be used inside a
+TradingProvider" and took the whole scene down; re-providing the context inside
+the Canvas did not fix it either. So `TotBoardView` and `TickerView` take every
+piece of state as props and touch no context at all, and the hall is handed
+markets and trades directly. `components/board/TotBoard.test.tsx` renders both
+with no provider mounted, which is exactly the condition inside the Canvas.
 
-1. *React context does not cross it.* R3F runs its own reconciler and drei's
-   `<Html>` portals children into a detached DOM subtree. A board that read
-   `useTrading()` threw "must be used inside a TradingProvider" and took the
-   whole scene down. Re-providing the context inside the Canvas did not fix it
-   either. So `TotBoardView` and `TickerView` take every piece of state as
-   props and touch no context at all; the context-reading wrappers exist only
-   for ordinary page use. `components/board/TotBoard.test.tsx` renders both
-   with no provider mounted, which is exactly the condition inside the Canvas.
-2. *drei's `scale` is not metres per pixel.* `<Html transform>` maps 400 CSS
-   pixels onto 10 world units at `scale={1}`. Passing metres-per-pixel straight
-   through rendered a 21.75m board 16 CSS pixels wide. `boardHtmlScale` does
-   the conversion and a test pins it.
-
-**The board is not part of the WebGL render.** drei's `<Html transform>` puts it
-in a DOM layer positioned by the camera matrix but composited outside the
-canvas. That is the whole point of the brief specifying CSS3DRenderer: the
-digits stay real text at projector resolution instead of becoming a blurry
-texture. The cost is that post-processing cannot touch the board — no bloom on
-the glyphs, no depth of field, and no WebGL geometry can occlude it. The board's
-glow is done in CSS instead, tuned to sit alongside the bloom rather than come
-from it. Rendering it to a texture would fix that and give up the crispness the
-approach exists to protect. Don't.
+**There is no DOM inside the hall at all.** The name tags over the traders were
+the last of it, and they had the board's problem in miniature: they could not be
+occluded, so they sat in front of columns they were behind, and stayed pin-sharp
+at the back of the room while their owners hazed out. They are painted sprites
+now (`nameTagTexture`), simply in the room like everything else.
 
 **Every dimension lives in `lib/hall.ts`.** One file, so the numbers can be
 compared against a Blender blockout and retuned in one place.
 
-**`lib/hall.test.ts` checks the geometry, because WebGL cannot run here.** R3F
-sizes itself with a ResizeObserver that a headless pane never delivers, so the
-canvas never initialises and the usual "look at it" loop is unavailable. The
+**`/lab/still` renders one frame of the hall on demand, and it is the reason
+any of the lighting above could be chosen at all.**
+
+R3F sizes itself with a ResizeObserver and drives itself with
+requestAnimationFrame. Both are delivered as part of the browser's rendering
+steps, so in a pane that is not compositing — headless preview, background tab,
+CI — neither ever fires, the `<Canvas>` never configures itself, and the scene
+does not merely fail to appear, it is never constructed. Every camera, palette
+and lighting decision in this room was being made blind.
+
+R3F ships the escape hatch: `createRoot(canvas).configure({ size, frameloop:
+"never" })` takes both dependencies out of play — an explicit size instead of
+measuring, manual `advance()` instead of a loop. The lab page mounts the *real*
+`<HallContents>` against such a root, advances it a few steps, and the canvas
+can be read back with `toDataURL`. Three things about it cost an hour each and
+are worth writing down:
+
+- **`<Canvas>` calls `extend(THREE)` and `createRoot` does not.** Without it
+  every intrinsic element throws "is not part of the THREE namespace", nothing
+  mounts, and the only symptom is a blank canvas.
+- **A canvas gets exactly one context, ever.** `root.unmount()` disposes the
+  renderer, which calls `forceContextLoss()`; StrictMode double-invokes effects
+  in development, so a canvas held in a ref is dead on the second run and fails
+  as `cannot read properties of null (reading 'precision')` deep inside three.
+  The page builds a fresh `<canvas>` element per mount.
+- **`advance()` takes milliseconds**, like `performance.now()`. Passing seconds
+  advances the scene by microseconds and looks exactly like nothing happening.
+
+It renders the real scene rather than a copy of it, which is the point — a
+previz that drifts from the thing it previsualises is worse than none.
+`/lab/textures` does the same job for the generated surfaces, and `/lab/raster`
+for the board.
+
+**`lib/hall.test.ts` still checks the geometry, because a still is not a proof.**
+The
 tests check that the numbers describe a coherent room: board fits its frame
 opening, camera inside the building and pointed at the board, podium in shot,
 nothing buried in a wall, haze thin enough to leave the board readable at the
 camera's distance. They caught a board rendering 12.03m tall inside a 9.9m
 opening, and a podium step sitting outside the camera frustum.
 
-**It is a station platform, and that is a deliberate departure from the brief.**
+**It is a Vegas sportsbook, and it used to be a station platform.**
+
 The brief specifies a dark exchange hall, "a quiet trading floor at night". The
-platform reading — tiled dado, beam ceiling, safety line, benches, practicals
-receding down the room — was asked for explicitly and chosen over that. The
-crowd is a departure from the brief too: five figures, and they are the actual
-traders (you plus the four bots), not extras. When the cynic sells the roadmap
-market down, that is his silhouette in the room and his name on the tape.
+station reading — glazed tile, poured concrete, a painted safety line — was
+chosen over that, and then replaced in turn, because the diagnosis for "the room
+is ugly" turned out to be measurable rather than a matter of taste:
+
+| surface | hue | sat |
+|---|---|---|
+| wall render | 217° | 18% |
+| ceiling | 222° | 27% |
+| columns | 224° | 31% |
+| floor | 230° | 38% |
+| ambient light | 219° | 20% |
+| fog | 218° | 44% |
+
+Every surface in the hall sat within a **13° hue spread** — one blue-grey at
+twelve brightnesses, with a cool ambient and a cool fog over the top of it. That
+is not a dark room, it is a monochrome one, and no amount of extra light was
+going to fix it. `lib/palette.ts` is the answer and the whole colour scheme now
+lives there: carpet, walnut, brass, oxblood, low amber lamps, and one wall of
+blue-white screens to be warm *against*. A sportsbook is also the room that
+makes a giant split-flap tote board make sense.
+
+Two things are worth knowing about that change:
+
+*It made the scene cheaper.* A sportsbook has carpet, not polished concrete, so
+the floor's `MeshReflectorMaterial` — an extra render of the whole scene,
+blurred, every frame, and the single most expensive thing in the room — went out
+with the station. Prettier and faster in the same commit is not the usual trade.
+
+*Almost none of the new light is a real light.* Pendant globes, ceiling coves,
+the bottle shelf and the neon are emissive geometry that the bloom pass turns
+into glow. Every real light is paid for by every material in the scene, per
+fragment, per frame — so all eight pendants glow and four of them light, all
+nine coves glow and three of them light, and nobody can tell.
+
+The crowd is a departure from the brief too: five figures, and they are the
+actual traders (you plus the four bots), not extras. When the cynic sells the
+roadmap market down, that is his silhouette in the room and his name on the
+tape. They stand, lean on the bar and perch at the high tables — see the note on
+`AVATARS` for why they used to have to be sitting down.
 
 **Camera height is the load-bearing number.** At 5.8m the camera floated like a
 drone and the figures read as scenery beneath it. At 1.75m — standing eye

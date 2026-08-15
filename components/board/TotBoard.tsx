@@ -9,63 +9,36 @@ import type { Market } from "@/lib/markets";
 /**
  * The board itself, with no opinion about what it is mounted in.
  *
- * Used flat on a page and mounted inside the 3D hall through drei's <Html
- * transform>, which keeps it as real DOM text rather than a rendered texture.
- * That is the entire reason the digits stay crisp at projector resolution.
+ * This is the DOM board: the flat view at /board, and the tape on the trader's
+ * page. The hall used to mount this same component through drei's `<Html
+ * transform>` and no longer does — inside the hall the board is painted into a
+ * texture instead (`board-raster.ts`), because a DOM layer composited over the
+ * canvas could not be fogged, bloomed or occluded, and re-rasterised itself
+ * every time the camera moved.
  *
- * Deliberately split in two. `TotBoardView` takes every piece of state as a
- * prop and touches no context at all; `TotBoard` is the convenience wrapper
- * that reads context for ordinary page use.
+ * The two share `lib/board-layout.ts` and nothing else. That split is
+ * deliberate: this one is a web page and can reflow, and the rastered one is a
+ * physical object with a fixed number of drums.
  *
- * The reason is not style. R3F's <Canvas> runs its own reconciler and drei's
- * <Html> portals its children into a detached DOM subtree, and React context
- * does not survive that crossing — the context-reading version threw
- * "useTrading must be used inside a TradingProvider" and took the whole scene
- * down with it. Re-providing the context inside the Canvas did not fix it
- * either. Passing plain props across the boundary is the only version that is
- * actually robust, so the hall renders `TotBoardView`.
+ * Still split into a pure view and a connected wrapper. `TotBoardView` takes
+ * every piece of state as a prop; `TotBoard` reads context for ordinary page
+ * use. Worth keeping — a board that can be handed its data is a board that can
+ * be tested and screenshotted without a provider around it.
  */
 
 export interface TotBoardViewProps {
   markets: Market[];
   trades: TradeRecord[];
   widthPx?: number;
-  /**
-   * How much atmosphere sits between the camera and the board, 0..1.
-   *
-   * The board is composited outside the WebGL canvas, so it receives none of
-   * the scene's fog. Passing the fog in and painting it on as an overlay is
-   * what stops it looking like a bright rectangle pasted over a hazy room.
-   * Computed by `boardFogBlend()` from the scene's own constants, never by eye.
-   */
-  fogBlend?: number;
-  fogColor?: string;
 }
 
-export function TotBoardView({
-  markets,
-  trades,
-  widthPx,
-  fogBlend,
-  fogColor,
-}: TotBoardViewProps) {
+export function TotBoardView({ markets, trades, widthPx }: TotBoardViewProps) {
   const openCount = markets.filter((m) => m.status === "open").length;
-  const graded = fogBlend !== undefined && fogBlend > 0;
 
   return (
     <div
-      className={`board flapboard${graded ? " board--in-scene" : ""}`}
-      style={
-        {
-          ...(widthPx ? { width: `${widthPx}px` } : {}),
-          ...(graded
-            ? {
-                "--board-fog": String(fogBlend),
-                "--board-fog-color": fogColor ?? "#141a24",
-              }
-            : {}),
-        } as React.CSSProperties
-      }
+      className="board flapboard"
+      style={widthPx ? { width: `${widthPx}px` } : undefined}
     >
       <div className="board__header">
         <div>

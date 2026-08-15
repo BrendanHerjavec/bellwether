@@ -3,8 +3,9 @@
 @import "../components/splitflap/splitflap.css";
 @import "../components/board/board.css";
 @import "../components/board/ticker.css";
-@import "../components/hall/hall.css";
 @import "../components/trading/trading.css";
+/* There is no hall.css. The hall has no DOM in it — the name tags that used to
+   live there are painted textures now, see components/hall/textures.ts. */
 
 /*
  * Bellwether runs dark, always. This is a board meant to be projected in a
