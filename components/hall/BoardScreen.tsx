@@ -15,7 +15,7 @@ import type { TradeRecord } from "@/components/trading/TradingProvider";
 import { TAPE_SPEED } from "@/lib/board-layout";
 import { BOARD_FRAME, BOARD_SCREEN, boardGeometry } from "@/lib/hall";
 import { priceOf } from "@/lib/lmsr";
-import type { Market } from "@/lib/markets";
+import { boardStatus, type Market } from "@/lib/markets";
 import { glassTexture } from "./textures";
 
 /**
@@ -60,7 +60,7 @@ export function BoardScreen({
         question: market.boardLabel,
         price: priceOf(market.state, "YES"),
         openingPrice: market.openingPrice,
-        status: market.status === "open" ? ("open" as const) : ("locked" as const),
+        status: boardStatus(market),
         weight: outstanding[i] / busiest,
       })),
       openCount: markets.filter((m) => m.status === "open").length,

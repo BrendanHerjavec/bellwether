@@ -1,0 +1,511 @@
+/**
+ * The demo's own chrome: the settlement stamp, the standings, the host strip.
+ *
+ * Kept out of board.css because none of it is the board. The board is a
+ * physical object in the room; this is the layer a presenter drives it from,
+ * and the two should be able to change without touching each other.
+ */
+
+.demo-stage {
+  position: relative;
+  min-height: 100%;
+  background:
+    radial-gradient(120% 90% at 50% 0%, #10131c 0%, #05060a 62%),
+    #05060a;
+}
+
+/* ------------------------------------------------------- settlement stamp */
+
+.stamp-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.stamp {
+  pointer-events: auto;
+  width: min(620px, 100%);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 190, 110, 0.18);
+  background: linear-gradient(180deg, #14161f 0%, #0b0d14 100%);
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.72),
+    0 0 0 1px rgba(0, 0, 0, 0.6);
+  padding: 22px 24px 20px;
+  cursor: pointer;
+  animation: stamp-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/*
+ * It lands rather than fades. A settlement is a hammer coming down on a
+ * question — the slight overshoot is the whole difference between "a value
+ * changed" and "that is decided now".
+ */
+@keyframes stamp-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.06) translateY(-10px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.995) translateY(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.stamp__verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 4px;
+  border: 1.5px solid currentColor;
+  padding: 4px 10px;
+  font-family: var(--font-flap), ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.stamp__verdict[data-outcome="YES"] {
+  color: #7fe0a0;
+}
+.stamp__verdict[data-outcome="NO"] {
+  color: #ff8a6a;
+}
+.stamp__verdict[data-outcome="VOID"] {
+  color: #9aa8bd;
+}
+.stamp__verdict[data-outcome="LOCK"] {
+  color: #e0a94a;
+}
+
+/* The closing book, on the doors stamp. Two columns so eight rows fit. */
+.closing-prices {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+}
+
+.closing-prices__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a7350;
+}
+
+.closing-prices__pct {
+  font-family: var(--font-flap), ui-monospace, monospace;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: #e8e4da;
+}
+
+.stamp__label {
+  margin-top: 12px;
+  font-family: var(--font-flap), ui-monospace, monospace;
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #e8e4da;
+}
+
+.stamp__citation {
+  margin-top: 14px;
+  border-left: 2px solid rgba(224, 169, 74, 0.55);
+  padding: 2px 0 2px 14px;
+}
+
+.stamp__quote {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: #d7d2c6;
+}
+
+.stamp__attrib {
+  margin-top: 7px;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8a7350;
+}
+
+.stamp__reasoning {
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #98a0b2;
+}
+
+.stamp__yours {
+  margin-top: 16px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 14px;
+}
+
+.stamp__amount {
+  font-family: var(--font-flap), ui-monospace, monospace;
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.stamp__foot {
+  margin-top: 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #4d5464;
+}
+
+/* ------------------------------------------------------------- standings */
+
+.standings-row {
+  display: grid;
+  grid-template-columns: 26px 1fr auto auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #c4c0b6;
+}
+
+.standings-row[data-you="true"] {
+  background: rgba(224, 169, 74, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(224, 169, 74, 0.28);
+  color: #e8e4da;
+}
+
+.standings-row__rank {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #6a7183;
+}
+
+.standings-row__worth {
+  font-family: var(--font-flap), ui-monospace, monospace;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ host strip */
+
+.host-strip {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 50;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(5, 6, 10, 0.93);
+  backdrop-filter: blur(6px);
+  padding: 10px 16px 12px;
+}
+
+.host-strip__track {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.host-strip__fill {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  background: #e0a94a;
+  transition: width 120ms linear;
+}
+
+.host-button {
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 5px 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #98a0b2;
+  transition:
+    color 140ms,
+    border-color 140ms;
+}
+
+.host-button:hover {
+  color: #e8e4da;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.host-button[data-primary="true"] {
+  border-color: rgba(224, 169, 74, 0.5);
+  background: rgba(224, 169, 74, 0.12);
+  color: #e0a94a;
+}
+
+/* -------------------------------------------------------------- confetti */
+
+.confetti-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------- bet toast */
+
+/*
+ * Bottom left, clear of the stamp in the centre and the balance top right.
+ * It has to be readable without taking the eye off the board, because the
+ * whole point of it is the price change happening on the board at the same
+ * moment.
+ */
+.bet-toast {
+  position: fixed;
+  left: 18px;
+  bottom: 78px;
+  z-index: 42;
+  width: 288px;
+  border-radius: 12px;
+  border: 1px solid rgba(224, 169, 74, 0.3);
+  background: linear-gradient(180deg, #171a24 0%, #0c0e16 100%);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
+  padding: 12px 14px;
+  animation: toast-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bet-toast__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.bet-toast__label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  color: #6a7183;
+}
+
+.bet-toast__body {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.bet-toast__cap {
+  font-family: ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #4d5464;
+}
+
+.bet-toast__figure {
+  margin-top: 2px;
+  font-family: var(--font-flap), ui-monospace, monospace;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: #e8e4da;
+}
+
+/* ----------------------------------------------------------- lock banner */
+
+.lock-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(154, 168, 189, 0.22);
+  background: rgba(154, 168, 189, 0.07);
+  padding: 8px 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9aa8bd;
+}
+
+.lock-banner__lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #9aa8bd;
+  box-shadow: 0 0 8px rgba(154, 168, 189, 0.7);
+}
+
+/* --------------------------------------------------------- balance pulse */
+
+/*
+ * One shot, replayed by remounting the node. No timers, no cleanup, and it
+ * cannot get stuck on if a render lands mid-animation.
+ */
+.credit-pop {
+  display: inline-block;
+  animation: credit-pop 620ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes credit-pop {
+  0% {
+    transform: scale(1);
+    color: #e0a94a;
+  }
+  35% {
+    transform: scale(1.16);
+    color: #7fe0a0;
+  }
+  100% {
+    transform: scale(1);
+    color: #e8e4da;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .credit-pop,
+  .bet-toast,
+  .stamp {
+    animation: none;
+  }
+}
+
+/* ----------------------------------------------------------- report card */
+
+.report {
+  border-radius: 12px;
+  border: 1px solid rgba(224, 169, 74, 0.22);
+  background: linear-gradient(180deg, rgba(224, 169, 74, 0.06) 0%, rgba(255, 255, 255, 0.02) 46%);
+  padding: 16px;
+}
+
+.report__net {
+  font-family: var(--font-flap), ui-monospace, monospace;
+  font-size: 40px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 0.9;
+}
+
+.report__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+/* ----------------------------------------------------------------- perks */
+
+.perk {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border-radius: 9px;
+  padding: 7px 8px;
+  transition:
+    background-color 200ms,
+    opacity 200ms;
+  opacity: 0.5;
+}
+
+.perk[data-affordable="true"],
+.perk[data-owned="true"] {
+  opacity: 1;
+  background: rgba(224, 169, 74, 0.08);
+}
+
+.perk__icon {
+  padding-top: 1px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.perk__buy {
+  flex-shrink: 0;
+  align-self: center;
+  border-radius: 5px;
+  border: 1px solid rgba(224, 169, 74, 0.5);
+  background: rgba(224, 169, 74, 0.14);
+  padding: 4px 9px;
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #e0a94a;
+  white-space: nowrap;
+}
+
+.perk__buy:disabled {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #4d5464;
+}
+
+.perk__owned {
+  flex-shrink: 0;
+  align-self: center;
+  font-family: ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7fe0a0;
+}
+
+/* The closing beat: draw the eye to what the winnings will actually buy. */
+.perks--live .perk[data-affordable="true"] {
+  animation: perk-glow 1500ms ease-in-out 3;
+}
+
+@keyframes perk-glow {
+  0%,
+  100% {
+    background: rgba(224, 169, 74, 0.08);
+  }
+  50% {
+    background: rgba(224, 169, 74, 0.2);
+  }
+}

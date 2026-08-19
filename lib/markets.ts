@@ -13,6 +13,25 @@ export type MarketKind = "meeting" | "outcome";
 export type MarketStatus = "open" | "locked" | "settled" | "void";
 export type Side = "YES" | "NO";
 
+/**
+ * What the board shows in the status column.
+ *
+ * Deliberately not the same union as `MarketStatus`: the ledger cares whether a
+ * market settled, the board cares which way, because the row is tinted green or
+ * red by it. Kept here rather than in the component so `board-raster.ts` and
+ * `MarketRow.tsx` — two independent renderers of the same board — cannot drift
+ * apart on what a status is.
+ */
+export type BoardStatus = "open" | "locked" | "settled-yes" | "settled-no" | "void";
+
+export function boardStatus(market: Market): BoardStatus {
+  if (market.status === "void") return "void";
+  if (market.status === "settled") {
+    return market.resolution === "YES" ? "settled-yes" : "settled-no";
+  }
+  return market.status === "open" ? "open" : "locked";
+}
+
 export interface Market {
   id: string;
   question: string;
@@ -33,9 +52,16 @@ export interface Market {
   /** When an outcome market resolves. Meeting markets resolve at the meeting. */
   resolvesNote: string;
   resolution?: Side;
+  /** Never set without a citation. That pairing is the settlement guarantee. */
   citationText?: string;
   citationTimestamp?: string;
+  citationSpeaker?: string;
+  /** How the resolver read the line. Shown under the quote, never instead of it. */
+  citationReasoning?: string;
+  /** Whether the transcript settled it, or a record that came later. */
+  citationSource?: "transcript" | "record";
   voidReason?: string;
+  settledAt?: number;
 
   /**
    * How this is scripted to turn out in the demo.

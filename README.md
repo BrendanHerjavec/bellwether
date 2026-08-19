@@ -25,6 +25,7 @@ npm run dev
 | `/`             | The argument for why this exists                               |
 | `/play`         | **The trader view.** Balance, markets, stakes, positions, perks |
 | `/board`        | The room display. The bulb board inside the 3D hall            |
+| `/demo`         | **The whole loop in 88 seconds.** Board, ticket, settlement, report          |
 | `/lab`          | The DOM split-flap board, with every animation knob exposed     |
 | `/lab/raster`   | The hall's bulb board, flat and full size, with a manual step   |
 | `/lab/textures` | Every generated surface in the room, flat and tiled 2×2         |
@@ -63,7 +64,10 @@ Following the build order in the brief:
 - [x] **4. Bot traders and the ticker tape.**
 - [~] 7. The 3D hall. Built and passing geometric tests, but **not yet seen by
       anyone**. See "The hall" below.
-- [ ] 5. Transcript upload, AI resolver, void path, settlement, leaderboard
+- [~] 5. Settlement. The void path, payouts, citations and the leaderboard are
+      built and run end to end at `/demo`. The resolver reads a fixture rather
+      than an uploaded transcript and a model — `resolveFromTranscript()` in
+      `lib/transcript.ts` is the one function that swap replaces.
 - [ ] 6. Market screening and the insider visibility rule
 - [ ] 7. The 3D hall
 - [ ] 8. Big screen mode, podium, perks shelf
@@ -79,6 +83,74 @@ components/board/       Market rows and the board housing.
 supabase/migrations/    Schema, the LMSR in SQL, and the trade transaction.
 app/lab/                Step 2's tuning page.
 ```
+
+## The demo
+
+`/demo` runs the whole loop on a clock, in 88 seconds:
+
+| Phase           | What happens                                                        |
+| --------------- | ------------------------------------------------------------------- |
+| Floor open      | 19s. Cold board, bots trading ~3/sec, your four calls land as beats  |
+| Doors close     | 19s. Every market locks, closing prices stamped on the record        |
+| The meeting     | 24–58s. Six markets settle, each with the line that decided it       |
+| Three months on | 59–74s. The long-run markets settle against a record, not a quote    |
+| Session closed  | 74s. Your report — won, lost, refunded — then the shelf it buys from |
+
+| Key     | What it does                          |
+| ------- | ------------------------------------- |
+| `space` | Play / pause                          |
+| `→`     | Skip to the next beat and fire it now |
+| `r`     | Restart from a cold board             |
+
+The room is deliberately not in it. `/board` renders the hall and can be
+recorded separately and cut over the top; what this page owes a viewer is the
+mechanism at a size they can read.
+
+Four things about it are worth knowing before changing anything:
+
+**Nothing on the page is demo-only logic.** Bets call the same `buy()`,
+settlement calls the same resolver, and the board is the board. The director in
+`components/demo/useDemoDirector.ts` only supplies timing — every action it
+takes is one a presenter could take by hand.
+
+**The board starts cold, and it has to.** An earlier version opened warm, with a
+session already behind it, and it could not show anyone betting — only the
+result of betting, which is the least interesting half. Now the director turns
+the ambient bot loop off and drives `runBotTick()` itself every 350ms while the
+doors are open, and never once they are shut. That is not a cosmetic speed-up:
+at the real nine-to-fifteen second cadence a viewer watches a static board and
+concludes the numbers are decoration. Nineteen seconds of floor at that tick is
+still forty-odd trades — the same board the old 46-second floor produced.
+
+**Your first call is the first thing that happens.** The informed trader holds a
+view of 86% on the enterprise market against an opening price of 18 — the
+largest mispricing on the board by a distance — so it goes there first and
+arrives with full conviction. Three seconds of floor takes the price into the
+thirties, and the same 120 credits then buys barely half the contracts. A long
+shot is only a long shot if you are in before the crowd, so the script opens the
+floor and places that bet on the same beat.
+
+**Every gap is longer than the overlay that fills it.** That, not taste, is what
+bounds how fast this can run: two settlements closer together than
+`STAMP_DISMISS_MS` would stack one stamp on another and hand the second the
+first’s leftover timer. The dismiss times are exported from the beat sheet and
+the tests assert the gaps against them, so tightening the demo again forces them
+to move together. At the current pace a citation is up for five seconds — enough
+to take in, not enough to study, which is right for a sizzle reel and wrong for
+a room asking questions. `space` holds any beat indefinitely.
+
+**The beat sheet is data.** `lib/demo-script.ts` holds the timings, the order,
+the caption for the screen and the line for whoever is talking. The order is
+dramatic rather than chronological — the safe markets go first so the mechanism
+is understood before it matters, the long shot lands fifth because it is the
+biggest payout of the session, and the void goes last because a refusal only
+means something once you have watched seven confident answers go up beside it.
+One of your four calls loses and one is refunded, both on purpose: a presenter
+who called everything right has shown an advertisement rather than a market.
+`transcript.test.ts` guards the parts that would quietly ruin a take — every
+market settles exactly once, every bet is placed while the floor is still open,
+the doors lock before anything settles, nothing trades afterwards, and no
+citation is quoted that is not actually in the transcript.
 
 ## The bot floor
 

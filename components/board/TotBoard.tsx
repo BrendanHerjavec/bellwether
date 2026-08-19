@@ -4,7 +4,7 @@ import { MarketRow } from "@/components/board/MarketRow";
 import { TickerView } from "@/components/board/Ticker";
 import { useTrading, type TradeRecord } from "@/components/trading/TradingProvider";
 import { priceOf } from "@/lib/lmsr";
-import type { Market } from "@/lib/markets";
+import { boardStatus, type Market } from "@/lib/markets";
 
 /**
  * The board itself, with no opinion about what it is mounted in.
@@ -72,7 +72,7 @@ export function TotBoardView({ markets, trades, widthPx }: TotBoardViewProps) {
             question={market.boardLabel}
             price={priceOf(market.state, "YES")}
             openingPrice={market.openingPrice}
-            status={market.status === "open" ? "open" : "locked"}
+            status={boardStatus(market)}
             baseDelayMs={index * 120}
           />
         ))}

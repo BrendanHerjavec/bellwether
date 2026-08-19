@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { SplitFlapPrice, SplitFlapText } from "@/components/splitflap/SplitFlapText";
+import type { BoardStatus } from "@/lib/markets";
 import type { FlipTiming } from "@/lib/splitflap";
 
 /**
@@ -14,7 +15,11 @@ import type { FlipTiming } from "@/lib/splitflap";
 const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
-export type MarketRowStatus = "open" | "locked" | "settled-yes" | "settled-no" | "void";
+/**
+ * Aliased rather than declared, so this renderer and the rastered board in the
+ * hall cannot drift apart on what a status is. The union lives in lib/markets.
+ */
+export type MarketRowStatus = BoardStatus;
 
 const STATUS_LABEL: Record<MarketRowStatus, string> = {
   open: "Open",

@@ -67,6 +67,15 @@ export default function Home() {
           >
             See the room display
           </Link>
+          {/* The whole loop, end to end, for anyone who would rather be shown
+              than told. Three and a half minutes on a clock. */}
+          <Link
+            href="/demo"
+            className="rounded-lg border px-5 py-2.5 text-[13.5px] font-semibold transition-colors"
+            style={{ borderColor: "var(--rule-strong)", color: "var(--ink-soft)" }}
+          >
+            Watch a session settle
+          </Link>
           <Link
             href="/lab"
             className="px-2 py-2.5 text-[12.5px] transition-opacity hover:opacity-70"
